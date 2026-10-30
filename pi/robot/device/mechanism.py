@@ -17,6 +17,7 @@ FIELDS = ('schema uptime_ms attached fault zero_version zero_valid config_mask b
 GRIP_HOLD_MDEG = 98000  # 默认夹持目标；不能再用安全最大角替代夹持语义。
 AXIS_ZERO_ZONE_UM = 1000
 AXIS_ZERO_MAX_RPM = 30  # 近零位使用旧轴低速档，保存表中的原速度不改写。
+AXIS_TRAVEL_UM = dict(lift=140000, reach=107000)  # 机械行程，与板端 MECH_*_TRAVEL_UM 一致；无硬限位。
 
 
 def grip_limit(firmware):
@@ -72,8 +73,8 @@ def payload(action, args, state, token):
             if type(rpm) is not int or not 1 <= rpm <= limit:
                 raise ValueError(f'单轴转速必须为1～{limit}RPM整数')
             target = integer(args.get('target_m'), 1e6)
-            if target < 0:
-                raise ValueError('最高/最近端为0，下降和伸出为正')
+            if not 0 <= target <= AXIS_TRAVEL_UM[actuator]:
+                raise ValueError('升降0～140mm、伸缩0～107mm；最高/最近端为0，下降和伸出为正')
             if tuned and target <= AXIS_ZERO_ZONE_UM and not firmware_since(args.get('_firmware'), 39):
                 rpm = min(rpm, AXIS_ZERO_MAX_RPM)
             timeout = 15000

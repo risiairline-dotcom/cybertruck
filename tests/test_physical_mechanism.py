@@ -154,6 +154,44 @@ class PhysicalMechanismTests(unittest.TestCase):
         packet=p.Decoder().feed(transport.writes[0])[0]
         self.assertEqual(packet.kind,p.STOP)
 
+    def test_reply_after_deadline_does_not_refresh_state(self):
+        for received,late in ((1.249,False),(1.25,True),(1.3,True)):
+            link=self.ready()
+            request=p.Packet(p.STOP,123,link.session,7,250,b'')
+            link.pending=(request,1.)
+            link.feed(p.Packet(p.STOP|128,123,link.session,7,0,bytes([p.OK])).encode(),received)
+            with self.subTest(received=received):
+                self.assertIsNone(link.pending)
+                self.assertEqual(link.latched,late)
+                self.assertEqual(link.stop_acknowledged,not late)
+
+    def test_transport_failure_ends_sequence_and_control(self):
+        core=DeviceCore(clock=lambda:2.);core.link=self.ready()
+        core.owner='page';core.token='secret';core.until=3.;core.sequence.status='RUNNING'
+        wire=core.halt(OSError('串口断开'))
+        self.assertEqual(p.Decoder().feed(wire)[0].kind,p.STOP)
+        self.assertEqual(core.sequence.status,'CANCELLED')
+        self.assertEqual((core.owner,core.token),('',''))
+        self.assertTrue(core.link.latched);self.assertFalse(core.link.stop_acknowledged)
+        self.assertEqual(core.state()['transport_halted'],'串口断开')
+        with self.assertRaises(ValueError):core.command(dict(op='claim',client='page',request_id='again'))
+
+    def test_teach_save_failure_keeps_previous_versions(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as folder:
+            core=DeviceCore(clock=lambda:1.01,runtime=folder,site_ready=True);core.link=self.ready()
+            core.command(dict(op='claim',client='test',request_id='claim'))
+            targets=dict(lift=.002,reach=0.,arm=math.pi,tray=math.pi/6,gripper=98*math.pi/180)
+            teach=dict(op='mechanism',client='test',token=core.token,request_id='teach',
+                       args=dict(action='teach',pose_id='test_pose',targets=targets))
+            with mock.patch('robot.workbench.storage.write_json',side_effect=OSError('磁盘失败')):
+                for _ in range(2):
+                    with self.assertRaises(OSError):core.command(teach)
+            self.assertEqual(core.poses,[])
+            self.assertFalse((Path(folder)/'physical_poses.json').exists())
+            self.assertEqual(core.command(teach)['revision'],1)
+            self.assertFalse(core.link.commands)
+
     def test_core_saved_versions_frozen_and_duplicate_dedup(self):
         with tempfile.TemporaryDirectory() as folder:
             core=DeviceCore(clock=lambda:1.01,runtime=folder,site_ready=True);core.link=self.ready()

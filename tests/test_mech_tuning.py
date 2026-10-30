@@ -13,7 +13,7 @@ class TuningTests(unittest.TestCase):
     def test_native_tuning(self):
         program=ROOT/'output/tests/mech-tuning.exe';control=ROOT/'firmware/User/Control'
         compile_c(program,[ROOT/'tests/mech_tuning.c',*(control/n for n in ('mech_guard.c','mech_axis.c','mech_servo.c')),ROOT/'firmware/User/Device/drive.c'])
-        for case in range(8):
+        for case in range(9):
             with self.subTest(case=case):
                 result=subprocess.run([str(program),str(case)],capture_output=True)
                 self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
@@ -42,13 +42,17 @@ class TuningTests(unittest.TestCase):
                 link.submit('bad','move',dict(axis='arm',target_rad=angle*math.pi/180,zero_version=1),1.01)
 
     def test_manual_axis_extended_but_legacy_keeps_speed_limit(self):
-        link=self.ready();link.submit('axis1','move',dict(axis='lift',target_m=.15,rpm=1000,zero_version=1),1.01)
+        link=self.ready();link.submit('axis1','move',dict(axis='lift',target_m=.14,rpm=1000,zero_version=1),1.01)
         kind,data,_=link.commands.popleft();self.assertEqual(kind,52)
-        self.assertEqual(struct.unpack_from('<i',data,12)[0],150000)
+        self.assertEqual(struct.unpack_from('<i',data,12)[0],140000)
         self.assertEqual(struct.unpack_from('<H',data,20)[0],1000)
         self.assertGreater(struct.unpack_from('<I',data,16)[0],5000) # 计入旧驱动加减速，不只按匀速估算。
         with self.assertRaises(ValueError):payload('move',dict(axis='lift',target_m=.15,rpm=1000),{},1)
         with self.assertRaises(ValueError):payload('move',dict(axis='lift',target_m=-.001,rpm=5,_manual_tuning=True),{},1)
+        payload('move',dict(axis='reach',target_m=.107,rpm=1000,_manual_tuning=True),{},1)
+        for axis,target in (('lift',.140001),('reach',.107001)):
+            with self.subTest(axis=axis),self.assertRaises(ValueError):
+                payload('move',dict(axis=axis,target_m=target,rpm=1000,_manual_tuning=True),{},1)
 
     def test_no_release_checkbox_required_and_mode_is_not_spoofable(self):
         link=self.ready();link.submit('claw1','move',dict(axis='gripper',target_rad=0,zero_version=1),1.01)

@@ -1,4 +1,4 @@
-import {initDevice} from './workbench-device.js?v=48.1';
+import {initDevice} from './workbench-device.js?v=49.1';
 
 /* 机械页仅接实车API；导航模型的刷新不参与本页状态或控制权。 */
 let remote;

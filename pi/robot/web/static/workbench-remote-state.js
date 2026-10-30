@@ -1,6 +1,6 @@
-import {firmwareSince} from './workbench-firmware.js?v=1';
+import {firmwareSince} from './workbench-firmware.js?v=2';
 import {canAct, targetError} from './workbench-mech-guide.js?v=3';
-import {faultText} from './workbench-mech-status.js?v=10';
+import {faultText} from './workbench-mech-status.js?v=14';
 
 /* 实车机械页纯显示规则；不保存令牌、零点或模型状态。 */
 export const actuators = [

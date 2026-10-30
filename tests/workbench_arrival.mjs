@@ -27,8 +27,9 @@ state.arrival.phase='MOVING';ui.draw();assert.match(fields.get('status').textCon
 state.arrival.phase='IDLE';state.firmware='GC-BASE-0.3.48';ui.draw();assert.equal(fields.get('start').disabled,false);
 state.firmware='GC-BASE-0.3.49';ui.draw();assert.equal(fields.get('start').disabled,false);
 state.firmware='GC-BASE-0.3.50';ui.draw();assert.equal(fields.get('start').disabled,false);
+state.firmware='GC-BASE-0.3.51';ui.draw();assert.equal(fields.get('start').disabled,false);
 state.arrival.phase='MOVING';ui.draw();assert.match(fields.get('status').textContent,/停车取样/);assert.ok(buttons.every(b=>b.disabled));
-state.arrival.phase='IDLE';state.firmware='GC-BASE-0.3.51';ui.draw();assert.equal(fields.get('start').disabled,true);
+state.arrival.phase='IDLE';state.firmware='GC-BASE-0.3.52';ui.draw();assert.equal(fields.get('start').disabled,true);
 state.firmware='GC-BASE-0.3.45';ui.draw();
 assert.ok(fields.get('auto-start').disabled);
 fields.get('confirm').checked=true;fields.get('start').onclick();await Promise.resolve();

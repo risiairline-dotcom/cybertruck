@@ -57,8 +57,8 @@ uint32_t Group_Begin(Group *group, const GroupGoal *goal, uint32_t now)
             group->axes[i].state = AXIS_IDLE;
             group->axes[i].goal.id = 0;
             result = Axis_Manual(&group->axes[i], &request, now);
-            if (result == MECH_RANGE && Mech_ManualPulses((uint8_t)i, goal->target[i]) ==
-                (uint32_t)group->axes[i].pulse_position[i])
+            if (result == MECH_RANGE && Mech_ManualPulses((uint8_t)i, goal->target[i]) != UINT32_MAX &&
+                Mech_ManualPulses((uint8_t)i, goal->target[i]) == (uint32_t)group->axes[i].pulse_position[i])
                 group->axes[i].state = AXIS_COMPLETE; /* 已在同一脉冲目标，保留真实静止证据。 */
             else if (result)
                 return result;

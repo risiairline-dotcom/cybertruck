@@ -83,6 +83,10 @@ class Link:
                     request.kind | 0x80, request.request, request.session):
                 continue
             self.pending = None
+            # now 是读出时刻，为到达时间的保守上界；超过期限的回复不能刷新状态。
+            if now - sent >= .25:
+                self.reset('应答超时，重新核对会话')
+                continue
             if self.custom_reply(packet, request, now, sent):
                 continue
             if not packet.payload or packet.payload[0] != p.OK:

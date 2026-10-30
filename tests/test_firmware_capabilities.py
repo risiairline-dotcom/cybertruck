@@ -6,7 +6,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'pi'))
-from robot.device.capabilities import firmware_capabilities
+from robot.device.capabilities import LATEST_MINOR, firmware_capabilities
 from robot.device.execution import MotionLink, STATUS, START_STATE, START_PREPARE, ARM, GOAL
 from robot.device.can_capture import CAN_CAPTURE
 from robot.device.feedback import FEEDBACK
@@ -16,10 +16,10 @@ from robot.device import protocol as p
 class CapabilityTests(unittest.TestCase):
     def test_original_motion_entry_matrix_is_unchanged(self):
         # 原drive_core条件的独立真值表；新诊断能力不得扩大任一运动入口。
-        for version in range(0, 52):
+        for version in range(0, LATEST_MINOR + 2):
             caps = firmware_capabilities(f'GC-BASE-0.3.{version}')
             for simulation in (False, True):
-                candidate = simulation and version in (22, 23, 24, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 47, 48, 49, 50)
+                candidate = simulation and (version in (22, 23, 24, 35, 36, 37, 38, 39, 40, 41, 42) or 45 <= version <= LATEST_MINOR)
                 offline = simulation and version in (12, 13, 14, 17, 18, 19, 20, 21)
                 keyed = version in (17, 18, 19, 20, 21)
                 old_routes = dict(short=version in (6, 7, 8, 9, 10, 11),
@@ -36,17 +36,17 @@ class CapabilityTests(unittest.TestCase):
                 self.assertEqual(caps.permits_key(simulation=simulation), bool(candidate or keyed))
 
     def test_protocol_release_boundaries_are_bounded(self):
-        for version in range(0, 52):
+        for version in range(0, LATEST_MINOR + 2):
             caps = firmware_capabilities(f'GC-BASE-0.3.{version}')
             with self.subTest(version=version):
-                self.assertEqual(caps.odom_fault, 9 <= version <= 50)
-                self.assertEqual(caps.can_history, 12 <= version <= 50)
+                self.assertEqual(caps.odom_fault, 9 <= version <= LATEST_MINOR)
+                self.assertEqual(caps.can_history, 12 <= version <= LATEST_MINOR)
                 self.assertEqual(caps.start_schema, 1 if version in (15, 16) else
-                                 2 if version in (17, 18, 19) else 3 if 20 <= version <= 50 else 0)
+                                 2 if version in (17, 18, 19) else 3 if 20 <= version <= LATEST_MINOR else 0)
 
     def test_unknown_or_malformed_versions_have_no_extension_or_motion(self):
         for value in (None, '', 42, {}, 'GC-BASE-0.3.043', 'GC-BASE-0.3.42-dev',
-                      'GC-BASE-0.4.0', 'GC-BASE-0.3.51', 'GC-BASE-0.3.42 ', 'gc-base-0.3.42'):
+                      'GC-BASE-0.4.0', f'GC-BASE-0.3.{LATEST_MINOR + 1}', 'GC-BASE-0.3.42 ', 'gc-base-0.3.42'):
             with self.subTest(firmware=value):
                 caps = firmware_capabilities(value)
                 self.assertFalse(caps.odom_fault or caps.can_history or caps.start_schema)
@@ -62,18 +62,18 @@ class CapabilityTests(unittest.TestCase):
         return link
 
     def test_known_versions_query_only_supported_readonly_extensions(self):
-        for version in range(6, 51):
+        for version in range(6, LATEST_MINOR + 1):
             with self.subTest(version=version):
                 link = self.link(version)
                 link.last_fault_query = -1.
-                self.assertEqual(link.extra_request(1.), (37, b'') if 9 <= version <= 50 else
-                                 (CAN_CAPTURE, b'\0') if 12 <= version <= 50 else None)
+                self.assertEqual(link.extra_request(1.), (37, b'') if 9 <= version <= LATEST_MINOR else
+                                 (CAN_CAPTURE, b'\0') if 12 <= version <= LATEST_MINOR else None)
                 link = self.link(version)
                 link.last_start_query = -1.
-                self.assertEqual(link.extra_request(1.), (START_STATE, b'') if 20 <= version <= 50 else
-                                 (CAN_CAPTURE, b'\0') if 12 <= version <= 50 else None)
+                self.assertEqual(link.extra_request(1.), (START_STATE, b'') if 20 <= version <= LATEST_MINOR else
+                                 (CAN_CAPTURE, b'\0') if 12 <= version <= LATEST_MINOR else None)
                 link = self.link(version)
-                self.assertEqual(link.extra_request(1.), (CAN_CAPTURE, b'\0') if 12 <= version <= 50 else None)
+                self.assertEqual(link.extra_request(1.), (CAN_CAPTURE, b'\0') if 12 <= version <= LATEST_MINOR else None)
 
     def test_new_diagnostics_do_not_run_can_pages_during_motion(self):
         for version in (24, 25, 34, 41, 42, 43):
