@@ -26,7 +26,7 @@ def samples():
 
 class CalibrationTests(unittest.TestCase):
     def test_center_requires_real_complete_stop_and_eight_distinct_results(self):
-        self.assertEqual(center(report())['source_m'],[.4,1.9])
+        self.assertEqual([round(v,9) for v in center(report())['source_m']],[.4,1.9])
         for key,value in [('domain','simulation'),('stop_confirmed',False),('live',True),('decode_bad',1)]:
             r=report();r[key]=value
             with self.subTest(key=key),self.assertRaises(ValueError):center(r)

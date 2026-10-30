@@ -1,6 +1,9 @@
 """单件转存正式模型闭环，不创建真实设备或物料计数。"""
 import json
 import math
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from test_execution import ROOT
@@ -97,10 +100,16 @@ class TransferTests(unittest.TestCase):
 
 
 class TransferCoreTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.library=ROOT/'output/tests'/('transfer.dll' if os.name=='nt' else 'transfer.so')
+        subprocess.run([sys.executable,'-B',str(ROOT/'tools/build_odom.py'),'--output',str(cls.library)],
+                       check=True,capture_output=True)
+
     def setUp(self):
         from robot.workbench.core import create_core
         self.temp=tempfile.TemporaryDirectory();self.now=100.;self.seq=0
-        self.app=create_core(ROOT/'output/workbench/native.dll',self.temp.name,background=False)
+        self.app=create_core(self.library,self.temp.name,background=False)
         self.core=self.app.state.core;self.core.clock=lambda:self.now;self.core.mech.clock=lambda:self.now;self.core.mech.updated=self.now
         self.token=''
         self.send('claim')

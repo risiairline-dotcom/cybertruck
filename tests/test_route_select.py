@@ -95,9 +95,6 @@ class SwitchTests(unittest.TestCase):
         self.assertTrue(next(v for v in records if v['kind']=='stop_result')['confirmed'])
         self.assertTrue(field.parked(compose(origin,Pose(transport.plant.x,transport.plant.y,transport.plant.yaw)),f'start_{zone}'))
         self.assertEqual(self.lib.Device_Value(7),0)
-        output = native.ROOT/f'output/start-switch/zone{zone}_execution.json'
-        output.write_text(json.dumps(dict(domain='simulation', physical_validated=False,
-            result=result,records=records,elapsed_s=transport.now,samples_2ms=checked[0]//2),indent=2),encoding='utf-8')
         return records, transport
 
     def test_zone1_complete_with_50mm_docks_and_sweep(self):

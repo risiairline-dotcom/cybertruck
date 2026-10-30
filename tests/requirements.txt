@@ -1,6 +1,10 @@
 -r ../pi/requirements.txt
+-r ../pi/requirements-vision.txt
+-r ../pi/requirements-connections.txt
 # Zig仅用于主机编译正式C协议进行互通测试，不安装到机器人运行环境。
 ziglang==0.16.0
+# 读取固件ELF符号布局（test_swd_layout）。
+pyelftools==0.33
 httpx==0.28.1
 httpcore==1.0.9
 certifi==2026.10.23

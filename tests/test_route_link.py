@@ -58,13 +58,6 @@ class RouteLinkTests(unittest.TestCase):
         self.assertGreater(transport.plant.y, .12)
         self.assertTrue(snapshot['execution']['stop_confirmed'])
         self.assertFalse(route['map_registered'])
-        output = ROOT / 'output/route-link'
-        output.mkdir(parents=True, exist_ok=True)
-        (output / 'closed-loop.json').write_text(json.dumps(dict(result=result, snapshot=snapshot,
-            records=records, truth=[transport.plant.x, transport.plant.y, transport.plant.yaw],
-            request_counts={name: sum(v.kind == kind for v in transport.requests)
-                            for name, kind in dict(OPEN=p.OPEN, CONFIG=CONFIG, ARM=ARM, GOAL=GOAL, STOP=p.STOP).items()}),
-            ensure_ascii=False, indent=2), encoding='utf-8')
 
     def test_lost_second_goal_ack_stops_without_third_goal(self):
         class LostAck(fixture.SimTransport):

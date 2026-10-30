@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'pi'))
+# 主机夹具与编译产物统一放在已忽略的 output/tests。
+(ROOT / 'output/tests').mkdir(parents=True, exist_ok=True)
 from robot.device import protocol as p
 from robot.device.execution import MotionLink, CONFIG, ARM, GOAL, STATUS, STATUS_DATA, config_payload, trial
 from robot.device.execution import START_PREPARE, START_STATE
@@ -510,9 +512,6 @@ class ExecutionTests(unittest.TestCase):
         end=plan['boundaries'][-1]
         self.assertLess(math.hypot(transport.plant.x-end[0],transport.plant.y-end[1]),.01)
         self.assertLess(abs(transport.plant.yaw-end[2]),.03)
-        (ROOT/'output/two-batch/execution.json').write_text(json.dumps(dict(result=result,
-            records=records,elapsed_s=transport.now,truth=[transport.plant.x,transport.plant.y,transport.plant.yaw],
-            domain='simulation'),indent=2),encoding='utf-8')
 
     def test_pc0_two_batch_route_keeps_one_session_and_nine_handoffs(self):
         plan = json.loads((ROOT/'config/batch_route.json').read_text(encoding='utf-8'))
@@ -539,11 +538,6 @@ class ExecutionTests(unittest.TestCase):
         end = plan['boundaries'][-1]
         self.assertLess(math.hypot(transport.plant.x-end[0], transport.plant.y-end[1]), .01)
         self.assertLess(abs(transport.plant.yaw-end[2]), .03)
-        output = ROOT/'output/two-batch/pc0-execution.json'
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(dict(domain='simulation', result=result, records=records,
-            physical_validated=False, total_model_s=transport.now, key_wait_model_s=50.,
-            truth=[transport.plant.x, transport.plant.y, transport.plant.yaw]), indent=2), encoding='utf-8')
 
     def test_pc0_batch_timeout_and_stale_gyro_never_arm(self):
         plan = json.loads((ROOT/'config/batch_route.json').read_text(encoding='utf-8'))
@@ -679,9 +673,6 @@ class ExecutionTests(unittest.TestCase):
         self.assertTrue(field.parked(final, 'start_2'))
         first_move = next(point for point in trace if math.dist(point[:2], origin.values()[:2]) > .005)
         self.assertLess(first_move[0], origin.x_m)  # 跳过按键等待帧，起步应朝地图-X。
-        (ROOT/'output/start2/exec_with_pc0.json').write_text(json.dumps(dict(domain='simulation',
-            physical_validated=False, result=result, records=records, elapsed_s=transport.now,
-            samples_2ms=checked[0]//2, truth=final.values(), trace=trace), indent=2), encoding='utf-8')
 
     def test_start2_white_list_rejects_speed_order_and_wrong_version(self):
         from robot.device.tracking import Spec
@@ -774,9 +765,6 @@ class ExecutionTests(unittest.TestCase):
         self.assertTrue(next(v for v in records if v['kind']=='stop_result')['confirmed'])
         self.assertLess(math.hypot(transport.plant.x-.001,transport.plant.y+.011),.01)
         self.assertLess(abs(transport.plant.yaw-math.pi),.03)
-        (ROOT/'output/full-route/execution.json').write_text(json.dumps(dict(result=result,
-            records=records,elapsed_s=transport.now,truth=[transport.plant.x,transport.plant.y,transport.plant.yaw],
-            domain='simulation'),indent=2),encoding='utf-8')
 
     def test_tour_order_and_adjustment_limits(self):
         plan=json.loads((ROOT/'config/tour_route.json').read_text())
@@ -838,11 +826,6 @@ class ExecutionTests(unittest.TestCase):
         self.assertTrue(next(v for v in records if v['kind']=='stop_result')['confirmed'])
         self.assertLess(math.hypot(transport.plant.x-.19, transport.plant.y+1.05), .015)
         self.assertLess(abs(transport.plant.yaw-math.pi/2), .04)
-        output = ROOT/'output/raw-route'
-        output.mkdir(parents=True,exist_ok=True)
-        (output/'execution.json').write_text(json.dumps(dict(result=result,records=records,
-            elapsed_s=transport.now,truth=[transport.plant.x,transport.plant.y,transport.plant.yaw],
-            domain='simulation'),indent=2),encoding='utf-8')
 
     def arm_raw(self):
         high=profile(); high.update(version=3,max_rpm=100)
@@ -912,11 +895,6 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(sum(v.kind == GOAL for v in transport.requests), 1)
         self.assertEqual(sum(v.kind == ARM for v in transport.requests), 1)
         self.assertTrue(next(v for v in records if v['kind']=='stop_result')['confirmed'])
-        output = ROOT / 'output/start1-qr'
-        output.mkdir(parents=True, exist_ok=True)
-        (output / 'execution.json').write_text(json.dumps(dict(result=result, records=records,
-            truth=[transport.plant.x,transport.plant.y,transport.plant.yaw],
-            elapsed_s=transport.now, domain='simulation'), indent=2), encoding='utf-8')
 
     def test_north_stale_placement_boot_never_arms(self):
         transport = SimTransport(self.lib)
@@ -1115,14 +1093,9 @@ class ExecutionTests(unittest.TestCase):
             transport = SimTransport(self.lib)
             records = []
             with tempfile.TemporaryDirectory() as directory:
-                try:
-                    result = run_trial(transport, profile(), case, directory,
-                                       lambda kind, **values: records.append(dict(kind=kind, **values)),
-                                       clock=lambda: transport.now, sleep=transport.sleep, simulation=True)
-                except Exception:
-                    (ROOT / 'output/drive/failed-trial.json').write_text(
-                        json.dumps(dict(case=case, records=records), ensure_ascii=False), encoding='utf-8')
-                    raise
+                result = run_trial(transport, profile(), case, directory,
+                                   lambda kind, **values: records.append(dict(kind=kind, **values)),
+                                   clock=lambda: transport.now, sleep=transport.sleep, simulation=True)
                 final = json.loads((Path(directory) / 'state.json').read_text(encoding='utf-8'))
                 stop = next(v for v in reversed(records) if v['kind'] == 'stop_result')
                 self.assertTrue(final['execution']['stop_confirmed'])
