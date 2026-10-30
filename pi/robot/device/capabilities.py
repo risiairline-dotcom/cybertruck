@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 # 已核对协议的最新固件 GC-BASE-0.3.LATEST_MINOR；新固件核对协议后只改这里。
-LATEST_MINOR = 50
+LATEST_MINOR = 51
 _PREFIX = 'GC-BASE-0.3.'
 
 
@@ -53,9 +53,9 @@ _PHYSICAL = {6: _SHORT, 7: _NORTH, 8: _RAW, 9: _RAW, 10: _TOUR, 11: _BATCH,
              17: _BATCH, 18: _BATCH, 19: _START2, 20: _SWITCH, 21: _SWITCH}
 _PHYSICAL_KEY = frozenset((17, 18, 19, 20, 21))
 # 此表同样保留原离线入口，不把未加入回归的.15/.16/.25～.34自动视为已验证。
-_SIMULATED = {**_PHYSICAL, 12: _BATCH, 13: _BATCH, 14: _BATCH,
-              **dict.fromkeys((22, 23, 24, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 47, 48, 49, 50), _SWITCH)}
-_SIMULATED_KEY = _PHYSICAL_KEY | {22, 23, 24, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 47, 48, 49, 50}
+_CANDIDATES = (22, 23, 24, *range(35, 43), *range(45, LATEST_MINOR + 1))
+_SIMULATED = {**_PHYSICAL, 12: _BATCH, 13: _BATCH, 14: _BATCH, **dict.fromkeys(_CANDIDATES, _SWITCH)}
+_SIMULATED_KEY = _PHYSICAL_KEY | set(_CANDIDATES)
 
 # 37：.9起固定112字节ExecFault；38：.12起schema1首次CAN错误/历史分页。
 # 60：.15/.16为schema1，.17～.19为schema2，.20～.43为schema3（增加PC1）。

@@ -5,6 +5,7 @@
 
 static const int32_t distance_um[2] = {MECH_LIFT_UM_PER_320, MECH_REACH_UM_PER_320};
 static const int32_t maximum_um[2] = {MECH_LIFT_MAX_UM, MECH_REACH_MAX_UM};
+static const int32_t travel_um[2] = {MECH_LIFT_TRAVEL_UM, MECH_REACH_TRAVEL_UM};
 static const int8_t signs[2] = {MECH_LIFT_SIGN, MECH_REACH_SIGN};
 
 static int64_t Abs(int64_t value)
@@ -231,7 +232,8 @@ void Mech_Poll(MechGuard *guard, uint32_t now, uint8_t base_stopped)
         {
             int64_t position = Mech_Position(guard, axis);
             if (position < -(guard->manual_range ? MECH_MANUAL_ENDPOINT_UM : MECH_FEEDBACK_TOL_UM) ||
-                (!guard->manual_range && position > maximum_um[axis] + MECH_FEEDBACK_TOL_UM))
+                position > (guard->manual_range ? travel_um[axis] + MECH_MANUAL_ENDPOINT_UM :
+                                                  maximum_um[axis] + MECH_FEEDBACK_TOL_UM))
             {
                 Mech_Freeze(guard, MECH_RANGE, (uint8_t)(axis + 1), now);
                 Mech_Invalidate(guard, MECH_RANGE);
@@ -328,7 +330,7 @@ int64_t Mech_Position(const MechGuard *guard, uint8_t axis)
 uint8_t Mech_AxisManual(const MechGuard *guard, uint32_t now, uint32_t version,
                         uint8_t axis, int32_t target_um)
 {
-    if (!guard || axis > 1 || target_um < 0)
+    if (!guard || axis > 1 || target_um < 0 || target_um > travel_um[axis])
         return MECH_RANGE;
     return Ready(guard, now, version);
 }
@@ -374,11 +376,9 @@ uint32_t Mech_Pulses(uint8_t axis, int32_t target_um)
 
 uint32_t Mech_ManualPulses(uint8_t axis, int32_t target_um)
 {
-    int64_t pulses;
-    if (axis > 1 || target_um < 0)
+    if (axis > 1 || target_um < 0 || target_um > travel_um[axis])
         return UINT32_MAX;
-    pulses = (int64_t)target_um * 320 / distance_um[axis];
-    return pulses <= INT32_MAX ? (uint32_t)pulses : UINT32_MAX;
+    return (uint32_t)((int64_t)target_um * 320 / distance_um[axis]);
 }
 
 uint16_t Mech_Pulse(uint8_t channel, int32_t target_mdeg)

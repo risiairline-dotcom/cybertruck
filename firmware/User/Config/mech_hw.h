@@ -9,8 +9,11 @@
 #define MECH_LIFT_UM_PER_320       4098L
 #define MECH_REACH_UM_PER_320     12400L
 #define MECH_RAW_PER_320          6554L
+/* 自动姿态已核对包络；手动调试受机械行程限制（升降最高为0向下，伸缩最近为0向外，无硬限位）。 */
 #define MECH_LIFT_MAX_UM         49000L
 #define MECH_REACH_MAX_UM        50000L
+#define MECH_LIFT_TRAVEL_UM     140000L
+#define MECH_REACH_TRAVEL_UM    107000L
 #define MECH_FEEDBACK_AGE_MS       250U
 /* 沿用旧axis.c：上一笔查询完成后，再留10ms机构查询间隔。 */
 #define MECH_QUERY_GAP_MS           10U

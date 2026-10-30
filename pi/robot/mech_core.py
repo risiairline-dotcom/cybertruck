@@ -42,6 +42,7 @@ class DeviceCore:
         self.safety_events = deque(maxlen=32)
         self.stop_evidence = deque(maxlen=12)
         self.site_ready = site_ready
+        self.halted = ''  # 传输线程异常退出的原因；非空时不再收发，停车结果未知。
         self.pose_path = Path(runtime) / 'physical_poses.json' if runtime else None
         self.poses = []
         self.sequence = Sequence()
@@ -79,14 +80,13 @@ class DeviceCore:
             self.poses = json.loads(self.pose_path.read_text(encoding='utf-8'))
 
     def tick(self, transport):
-        # 串口中已经完整到达的回复先交给解析器，再判定主机快照时效。
+        # 串口中已经完整到达的回复先交给解析器，再判定主机快照时效；期限由 Link.feed 统一检查。
         waiting=getattr(transport,'in_waiting',0)
         if waiting:
             data=transport.read(min(4096,waiting))
             with self.lock:
-                received=self.clock()
-                if data and self.link.pending and received-self.link.pending[1]<.25:
-                    self.link.feed(data,received)
+                if data:
+                    self.link.feed(data,self.clock())
         with self.lock:
             now = self.clock()
             if self.token and now >= self.until:
@@ -123,6 +123,7 @@ class DeviceCore:
     def state(self):
         with self.lock:
             return dict(self.link.view(self.clock()), owner=self.owner, poses=self.poses, site_ready=self.site_ready,
+                        transport_halted=self.halted or None,
                         sequences=self.visible_sequences(), sequence=self.sequence.view(),
                         sequence_management=dict(schema=1, deleted_count=len(self.sequence_archive)),
                         recovery=self.recovery.view(),
@@ -196,6 +197,14 @@ class DeviceCore:
         self.until = 0.
         self.safety_events.append(dict(at_s=self.clock(), wall_s=time.time(),
             source=source, client=client, reason=reason))
+
+    def halt(self, error):
+        """传输线程异常退出：与显式停止同一路径结束任务和控制权，返回最后一次停止帧；停车结果未知。"""
+        with self.lock:
+            self.stop_control(f'传输中断，任务不续跑：{error}', 'transport-error', self.owner)
+            self.link.reset(f'设备核心停止：{error}')
+            self.halted = str(error)
+            return self.link.step(self.clock())
 
     def capture_stop(self,reason,source):
         """先留最后已收状态；断串口后仍能解释，旧快照绝不用于动作许可。"""
@@ -380,10 +389,12 @@ class DeviceCore:
                 record = dict(id=pose_id, revision=1 + max((r['revision'] for r in self.poses if r['id'] == pose_id), default=0),
                               targets=targets, domain='physical_draft', physical_validated=False)
                 record['sha256'] = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
-                self.poses.append(record)
+                # 先落盘再替换内存，保存失败不留下未持久化版本。
+                updated = [*self.poses, record]
                 if self.pose_path:
                     from .workbench.storage import write_json
-                    write_json(self.pose_path, self.poses)
+                    write_json(self.pose_path, updated)
+                self.poses = updated
                 result = dict(status='SAVED_DRAFT', revision=record['revision'], domain='physical_draft')
             else:
                 if action == 'pose':
@@ -409,12 +420,7 @@ def create_app(core, transport=None):
             try:
                 core.tick(transport)
             except Exception as exc:
-                with core.lock:
-                    core.capture_stop(str(exc),'transport-error')
-                    core.arrival.cancel('传输中断，微调不续跑')
-                    core.centering.cancel('传输中断，自动对中不续跑')
-                    core.link.reset(f'设备核心停止：{exc}')
-                    wire = core.link.step(core.clock())
+                wire = core.halt(exc)
                 try:
                     if wire:
                         transport.write(wire)

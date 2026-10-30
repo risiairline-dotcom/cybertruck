@@ -119,6 +119,24 @@ class ArrivalTests(unittest.TestCase):
         self.assertIn('满60秒超时',a.advance(l,60))
         self.assertEqual(a.phase,'FAILED');self.assertEqual(a.steps,0);self.assertFalse(l.commands)
 
+    def test_invalid_pose_wait_has_stage_deadline(self):
+        a=Arrival();l=link();a.phase='KEY_PREPARE';a.identity=(123,456,1);a.started=0
+        l.execution['pose_valid']=False
+        for now in (0,2,5):
+            l.actual_at=l.base_at=l.group_at=now
+            self.assertIsNone(a.advance(l,now))
+        l.actual_at=l.base_at=l.group_at=5.01
+        self.assertIn('位姿持续无效',a.advance(l,5.01))
+        self.assertEqual(a.phase,'FAILED');self.assertFalse(l.commands)
+
+    def test_arming_and_moving_waits_are_bounded(self):
+        for phase,limit in (('ARMING',3),('MOVING',12)):
+            a=Arrival();l=link();a.phase=phase;a.identity=(123,456,1)
+            self.assertIsNone(a.advance(l,0))
+            l.actual_at=l.base_at=l.group_at=limit+.01
+            self.assertIsNotNone(a.advance(l,limit+.01))
+            self.assertEqual(a.phase,'FAILED');self.assertFalse(l.commands)
+
     def test_old_ticket_or_old_start_frame_cannot_authorize_arm(self):
         for ticket,stamp in ((2,1),(1,.749)):
             a=Arrival();l=link();a.phase='WAIT_PC0';a.identity=(123,456,1)

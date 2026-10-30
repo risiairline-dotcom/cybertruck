@@ -1,4 +1,4 @@
-import {firmwareSince} from './workbench-firmware.js?v=1';
+import {firmwareSince} from './workbench-firmware.js?v=2';
 import {setText} from './workbench-dom.js?v=1';
 
 /* 沿用机械页控制权及保活；自动对中使用Pi本地订阅，不采信浏览器像素报文。 */

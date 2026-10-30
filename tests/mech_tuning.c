@@ -116,6 +116,16 @@ int TUNING_MAIN(int argc,char **argv)
         Servo_Init(&servo,&guard,0);initial[1]=359001;
         CHECK(Servo_SeedManual(&servo,initial,now,1)==MECH_RANGE);
     }
+    else if(which==8)
+    {
+        /* 手动调试同样受机械行程限制：升降140mm、伸缩107mm。 */
+        goal.rpm=1000;goal.timeout_ms=300000;
+        goal.target_um=140001;CHECK(Axis_Manual(&axis,&goal,now)==MECH_RANGE);
+        goal.axis=1;goal.target_um=107001;CHECK(Axis_Manual(&axis,&goal,now)==MECH_RANGE);
+        CHECK(Mech_ManualPulses(0,140001)==UINT32_MAX&&Mech_ManualPulses(1,107001)==UINT32_MAX);
+        CHECK(Mech_ManualPulses(0,140000)!=UINT32_MAX&&Mech_ManualPulses(1,107000)!=UINT32_MAX);
+        goal.target_um=107000;CHECK(!Axis_Manual(&axis,&goal,now));
+    }
     else CHECK(0);
     return 0;
 }

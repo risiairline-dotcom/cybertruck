@@ -46,6 +46,14 @@ def micro_goal(action_id, axis, millimeters):
     return struct.pack('<II',action_id,10000)+spec
 
 
+# 只等待反馈、不发新请求的阶段期限（秒）；超时按失败停止，不自动重试。
+STAGE_LIMIT_S = {
+    'KEY_PREPARE': (5., '底盘位姿持续无效，未请求PC0准备'),
+    'ARMING': (3., '底盘未在期限内进入执行模式'),
+    'MOVING': (12., '小位移未在期限内完成，停止而不重放'),
+}
+
+
 class Arrival:
     def __init__(self):
         self.phase = 'IDLE'
@@ -131,6 +139,9 @@ class Arrival:
         try:
             if self.stage_clock is None or self.stage_clock[0]!=self.phase:
                 self.stage_clock=(self.phase,now)
+            limit,message=STAGE_LIMIT_S.get(self.phase,(None,''))
+            if limit is not None and now-self.stage_clock[1]>limit:
+                raise ValueError(message)
             self.check(link,now)
             if (link.boot,link.session,link.actual.get('zero_version'))!=self.identity:
                 raise ValueError('微调启动身份或零点变化')
