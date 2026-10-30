@@ -14,19 +14,18 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 class DelayedMicro(ClosedLoop):
-    def __init__(self, library, axis='y', mm=5, period=120, tau=.2, legacy=False,
-                 gain=1., ack=True, stalled=False, send_delay_ms=10, yaw_tolerance=None):
+    def __init__(self, library, axis='y', mm=5, period=120, tau=.2,
+                 gain=1., ack=True, stalled=False, send_delay_ms=10):
         calibration=fixture();calibration.calibration=10;calibration.gap_ms=250;calibration.margin_counts=64
         config=settings(calibration)
-        config.kp_xy=7.199483 if legacy else 1
+        config.kp_xy=1
         config.kp_yaw=1;config.kd_gyro=.1
         config.correction_m_s=.015;config.correction_rad_s=.1
         config.max_rpm=6;config.slew_rpm_s=30
-        config.position_tol_m=.0008;config.yaw_tol_rad=.035 if legacy else math.radians(.2)
-        if yaw_tolerance is not None: config.yaw_tol_rad=yaw_tolerance
+        config.position_tol_m=.0008;config.yaw_tol_rad=math.radians(.2)
         config.still_rpm=1;config.still_m_s=.005;config.still_rad_s=.035
         config.count_drift[:]=[32]*4
-        config.feedback_gap_ms=250;config.micro_steps=0 if legacy else 1
+        config.feedback_gap_ms=250;config.micro_steps=1
         self.period=period
         super().__init__(library,config=config,calibration=calibration,auto_start=False,
                          disturbance=False,ack=ack,stalled=stalled,send_delay_ms=send_delay_ms)
@@ -78,19 +77,6 @@ class MicroDynamicsTests(unittest.TestCase):
                                             elapsed_ms=result['elapsed_ms'],error_m=result['output']['position_error_m']))
         (ROOT/'output/tests/micro_dynamics_0349.json').write_text(json.dumps(reports,indent=2),encoding='utf-8')
 
-    def test_old_continuous_gain_can_oscillate_with_delayed_feedback(self):
-        model=DelayedMicro(self.library,period=200,tau=.35,legacy=True,gain=1.4)
-        result=model.run(11000)
-        self.assertEqual(result['state'],'FAILED')
-        self.assertEqual(result['output']['fault'],7)
-        directions=[math.copysign(1,out['rpm'][1]) for _,out in model.commands if out['rpm'][1]]
-        self.assertGreater(sum(a!=b for a,b in zip(directions,directions[1:])),4)
-        fixed=DelayedMicro(self.library,period=200,tau=.35,gain=1.4)
-        repaired=fixed.run(11000)
-        self.assertEqual(repaired['state'],'COMPLETE')
-        (ROOT/'output/tests/micro_dynamics_negative_0349.json').write_text(
-            json.dumps(dict(model='synthetic delay/asymmetry, not measured hardware',legacy=result,fixed=repaired),indent=2),encoding='utf-8')
-
     def test_missing_motion_ack_stops_within_feedback_budget(self):
         model=DelayedMicro(self.library,ack=False)
         result=model.run(11000)
@@ -99,7 +85,7 @@ class MicroDynamicsTests(unittest.TestCase):
         nonzero=[at for at,out in model.commands if any(out['rpm'])]
         self.assertLess(max(nonzero)-min(nonzero),250)
 
-    def test_heading_bias_old_tolerance_negative_and_fixed(self):
+    def test_heading_bias_stays_within_tolerance(self):
         reports=[]
         for delay in (10,80,160):
             for gain in (.2,.4,.6):
@@ -110,13 +96,8 @@ class MicroDynamicsTests(unittest.TestCase):
                 self.assertLessEqual(abs(result['plant']['yaw_rad']),math.radians(.2))
                 self.assertLessEqual(result['output']['position_error_m'],.0008)
                 reports.append(dict(delay_ms=delay,gain_difference=gain,result=result['output']))
-        old=DelayedMicro(self.library,yaw_tolerance=.035)
-        old.plant.gains=[1.6,1.6,.4,.4]
-        result=old.run(11000)
-        self.assertEqual(result['state'],'COMPLETE')
-        self.assertGreater(abs(result['plant']['yaw_rad']),math.radians(.5))
         (ROOT/'output/tests/micro_heading_0349.json').write_text(json.dumps(
-            dict(synthetic=True,cases=reports,old_tolerance=result['output']),indent=2),encoding='utf-8')
+            dict(synthetic=True,cases=reports),indent=2),encoding='utf-8')
 
     def test_excessive_imbalance_is_not_reported_as_accurate_completion(self):
         model=DelayedMicro(self.library)

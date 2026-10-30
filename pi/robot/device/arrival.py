@@ -5,6 +5,7 @@ import json
 import math
 import struct
 
+from .capabilities import firmware_since
 from .execution import config_payload, SPEC_DATA
 
 
@@ -68,7 +69,7 @@ class Arrival:
                     action_id=self.action_id,steps=self.steps)
 
     def start(self, link, record, order, args, now):
-        if self.active or link.firmware not in ('GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') or not link.commissioning:
+        if self.active or not firmware_since(link.firmware, 45) or not link.commissioning:
             raise ValueError('微调要求已支持的固件、现场许可及空闲状态')
         if args.get('empty_path_confirmed') is not True or args.get('actual_pose_confirmed') is not True:
             raise ValueError('需按实物确认空爪、固定观察姿态及小位移空间')

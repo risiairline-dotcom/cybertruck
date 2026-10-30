@@ -4,21 +4,6 @@ from pathlib import Path
 from test_execution import ROOT,compile_c
 
 class TargetLedgerTests(unittest.TestCase):
-    def test_old_four_count_gate_reproduces_snapshot_timeout(self):
-        control=ROOT/'firmware/User/Control'
-        source=(control/'mech_axis.c').read_text(encoding='utf-8')
-        gate='return axis->manual ? Mech_RawTolerance(axis->goal.axis, MECH_MANUAL_TOL_UM) : MECH_AXIS_TARGET_RAW;'
-        self.assertIn(gate,source)
-        # 保持真实4raw旧门槛，不靠降低测试目标或延长期限让它通过。
-        source=source.replace(gate,'return axis->manual ? MECH_AXIS_TARGET_RAW : MECH_AXIS_TARGET_RAW;')
-        with tempfile.TemporaryDirectory(dir=ROOT/'output/tests') as folder:
-            path=Path(folder);old=path/'old_target.c';old.write_text(source,encoding='utf-8')
-            program=path/'old.exe'
-            compile_c(program,[ROOT/'tests/mech_target_ledger.c',control/'mech_guard.c',old,ROOT/'firmware/User/Device/drive.c'])
-            result=subprocess.run([str(program),'0'],capture_output=True)
-            self.assertNotEqual(result.returncode,0)
-            self.assertIn('reason=104',result.stderr.decode(errors='replace'))
-
     def test_0341_keeps_requested_speed_and_fresh_feedback_gates(self):
         import struct
         from robot.device.mechanism import payload

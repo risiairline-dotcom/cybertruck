@@ -1,6 +1,25 @@
-"""已核对的底盘协议能力与入口许可；协议存在不代表已准许实车运动。"""
+"""各固件版本的协议能力与运动入口许可。"""
 
 from dataclasses import dataclass
+
+# 已核对协议的最新固件 GC-BASE-0.3.LATEST_MINOR；新固件核对协议后只改这里。
+LATEST_MINOR = 50
+_PREFIX = 'GC-BASE-0.3.'
+
+
+def firmware_minor(firmware):
+    """'GC-BASE-0.3.N' 返回 N；其他格式返回 None。"""
+    if isinstance(firmware, str) and firmware.startswith(_PREFIX):
+        tail = firmware[len(_PREFIX):]
+        if tail.isdigit() and str(int(tail)) == tail:
+            return int(tail)
+    return None
+
+
+def firmware_since(firmware, minor):
+    """固件位于 0.3.minor 至最新已核对版本之间。"""
+    value = firmware_minor(firmware)
+    return value is not None and minor <= value <= LATEST_MINOR
 
 
 @dataclass(frozen=True)
@@ -51,7 +70,7 @@ _CAPABILITIES = {
         simulated_motion=_SIMULATED.get(version, _NONE),
         physical_key=version in _PHYSICAL_KEY,
         simulated_key=version in _SIMULATED_KEY)
-    for version in range(6, 51)
+    for version in range(6, LATEST_MINOR + 1)
 }
 _UNKNOWN = FirmwareCapabilities()
 

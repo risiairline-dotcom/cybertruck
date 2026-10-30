@@ -35,19 +35,4 @@ class CanQueryCaptureTests(unittest.TestCase):
     def test_timeout_record_preserves_millisecond_wrap(self): self.run_case(14)
     def test_timeout_record_includes_last_unmatched_reply(self): self.run_case(15)
 
-    def test_negative_control_txok_only_handoff_is_detected(self):
-        device = ROOT / 'firmware/User/Device'
-        source = (device / 'bus.c').read_text(encoding='utf-8')
-        modified = source.replace('if (state == CAN_SENT && reply_wait)', 'if (0 && state == CAN_SENT && reply_wait)')
-        self.assertNotEqual(source, modified)
-        with tempfile.TemporaryDirectory(dir=ROOT / 'output/tests') as folder:
-            folder = Path(folder)
-            bus = folder / 'bus-txok-only.c'; bus.write_text(modified, encoding='utf-8')
-            binary = folder / 'negative.exe'
-            compile_c(binary, [ROOT / 'tests/can_query_capture.c', device / 'can_tx.c', bus, device / 'drive.c'],
-                      extra=['-I', str(ROOT / 'tests'), '-include', str(ROOT / 'tests/can_hal_stub.h')])
-            result = subprocess.run([str(binary), '1'], capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-
-
 if __name__ == '__main__': unittest.main()

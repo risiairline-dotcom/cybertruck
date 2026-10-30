@@ -1,3 +1,4 @@
+import {firmwareSince} from './workbench-firmware.js?v=1';
 import {setText, setSteps} from './workbench-dom.js?v=1';
 import {actuators,moveArgs,allowed,gripMaximum} from './workbench-remote-state.js?v=48.1';
 
@@ -83,7 +84,7 @@ export function initSequence(root,read,act,notify,owned,pending,erase,metadata=r
         const state=read(),records=state.sequences||[],nextKey=JSON.stringify(records.map(r=>[r.id,r.revision,r.sha256]));
         if(nextKey!==versionKey){const old=el('versions').value;versionKey=nextKey;el('versions').replaceChildren(...records.map(r=>new Option(`${r.id} · v${r.revision}`,`${r.id}:${r.revision}`)));if(records.some(r=>`${r.id}:${r.revision}`===old))el('versions').value=old;else if(records.length)el('versions').value=`${records.at(-1).id}:${records.at(-1).revision}`;else el('versions').append(new Option('暂无保存版本',''));}
         const run=state.sequence?.status==='RUNNING'||state.group?.state===1,record=selected(),match=matches(record);
-        const accelUnsupported=!['GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'].includes(state.firmware)&&rows.some(r=>['lift','reach'].includes(r.axis)&&Number(r.accel??1)!==1);
+        const accelUnsupported=!firmwareSince(state.firmware, 42)&&rows.some(r=>['lift','reach'].includes(r.axis)&&Number(r.accel??1)!==1);
         const names={IDLE:'尚未运行',RUNNING:'执行中',DONE:'命令流程完成',FAILED:'已失败',CANCELLED:'已停止'};
         setText(el('state'),`${names[state.sequence?.status]||'尚未运行'}${state.sequence?.count?` · ${state.sequence.index}/${state.sequence.count}组`:''}`);
         for(const button of card.querySelectorAll('input,select,[data-remove],#seq-add,#seq-load'))button.disabled=run||
@@ -93,7 +94,7 @@ export function initSequence(root,read,act,notify,owned,pending,erase,metadata=r
         el('delete').title=state.sequence_management?.schema!==1?'设备核心待更新，现有版本未删除':'仅删除选中的版本；参数草稿保留，历史归档可追溯';
         el('delete-confirm').disabled=!canDeleteSequence(metadata(),deleteTarget,owned(),pending());
         el('run').disabled=el('together').disabled=run||!match||accelUnsupported||!allowed(state,owned(),pending(),'program_run');
-        setText(el('message'),state.sequence?.reason||(accelUnsupported?'可调轴加速度需0.3.42；当前编辑草稿已在本机保留。':!match?'参数未保存或与选中版本不同；保存/读取后再执行。':!['GC-BASE-0.3.32','GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'].includes(state.firmware)?'联调执行需要0.3.32；当前仅编辑保存参数。':'已保存；同组并行不保证严格同步启动或同时到位，故障/停止后不自动续跑。'));
+        setText(el('message'),state.sequence?.reason||(accelUnsupported?'可调轴加速度需0.3.42；当前编辑草稿已在本机保留。':!match?'参数未保存或与选中版本不同；保存/读取后再执行。':!firmwareSince(state.firmware, 32)?'联调执行需要0.3.32；当前仅编辑保存参数。':'已保存；同组并行不保证严格同步启动或同时到位，故障/停止后不自动续跑。'));
     }
     el('add').onclick=()=>{if(rows.length>=40)return;rows.push({order:rows.length?Math.max(...rows.map(r=>Number(r.order)||1))+1:1,axis:'lift',target:0,speed:5});persist();renderRows();draw();};
     el('name').onchange=()=>{persist();draw();};el('versions').onchange=()=>{deleteTarget=null;el('delete-review').hidden=true;draw();};

@@ -3,6 +3,8 @@ import copy
 import hashlib
 import json
 
+from .capabilities import firmware_since
+
 NAMES = ('lift','reach','tray','arm','gripper')
 
 def groups(rows, mode='ordered'):
@@ -66,7 +68,7 @@ class Sequence:
         for stage in plan:
             payload('group',dict(members=stage['members'],zero_version=link.actual.get('zero_version'),
                                  _firmware=link.firmware),link.actual,1)
-        if (link.firmware not in ('GC-BASE-0.3.32','GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') or link.home.get('state') in (1,2,3) or not link.manual_debug or link.action_locked or link.latched or
+        if (not firmware_since(link.firmware, 32) or link.home.get('state') in (1,2,3) or not link.manual_debug or link.action_locked or link.latched or
                 not link.commissioning or not link.bound or now-link.actual_at>=.25 or now-link.base_at>=.25 or
                 now-link.group_at>=.25 or link.group.get('state')==1 or link.actual.get('fault') or
                 not link.actual.get('zero_valid') or link.base.get('fault') or not link.base.get('stopped') or
@@ -151,7 +153,7 @@ class Sequence:
                 return ''
         if now-self.wait_started>=3.:
             return fail('组间稳定等待超过3秒；停止且不重放动作')
-        if (link.commands or link.operation or link.actual.get('stable_samples',0)<(2 if link.firmware in ('GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else 5) or
+        if (link.commands or link.operation or link.actual.get('stable_samples',0)<(2 if firmware_since(link.firmware, 39) else 5) or
                 link.actual_at<=self.retry_after):
             return ''
         self.attempt+=1

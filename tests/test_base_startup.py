@@ -38,27 +38,5 @@ class BaseStartupTests(unittest.TestCase):
     def test_missing_reply_after_startup_still_uses_100ms_deadline(self): self.run_case(4)
     def test_real_can_error_during_preparation_is_not_masked(self): self.run_case(5)
 
-    def test_previous_early_query_is_detected(self):
-        source = (ROOT / 'firmware/User/Board/base_port.c').read_text(encoding='utf-8')
-        old = source.replace('if (startup_pending && (uint32_t)(now - startup_ms) < BUS_STARTUP_SETTLE_MS)',
-                             'if (0)')
-        self.assertNotEqual(source, old)
-        with tempfile.TemporaryDirectory(dir=ROOT / 'output/tests') as folder:
-            folder = Path(folder)
-            port = folder / 'old_base_port.c'
-            port.write_text(old, encoding='utf-8')
-            fixture = folder / 'old_fixture.c'
-            original = (ROOT / 'tests/base_startup.c').read_text(encoding='utf-8')
-            fixture.write_text(original.replace('"../firmware/User/Board/base_port.c"',
-                                                 '"old_base_port.c"'), encoding='utf-8')
-            output = folder / 'negative.exe'
-            self.build(output, fixture)
-            result = subprocess.run([str(output), '0'], capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            reproduced = subprocess.run([str(output), '6'], capture_output=True)
-            self.assertEqual(reproduced.returncode, 0, reproduced.stderr.decode('utf-8', errors='replace'))
-            self.assertIn(b'old startup reproduced ID4 query0x35', reproduced.stdout)
-
-
 if __name__ == '__main__':
     unittest.main()

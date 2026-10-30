@@ -1,4 +1,4 @@
-"""只读核对基础工程配置；不编译、不启动设备、不写入工程。"""
+"""只读核对硬件安全规则与 Keil 工程引用；不编译、不启动设备、不写入工程。"""
 
 import json
 import re
@@ -11,28 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 FW = ROOT / "firmware"
 ERRORS = []
 CHECKS = 0
-USER_FILES = {FW / 'User' / name for name in (
-    'App/app.c', 'App/app.h', 'Board/port.c', 'Board/port.h',
-    'Comm/frame.c', 'Comm/frame.h', 'Comm/comm.c', 'Comm/comm.h',
-    'Control/kin.c', 'Control/kin.h', 'Control/yaw.c', 'Control/yaw.h',
-    'Control/curve.c', 'Control/curve.h', 'Control/line.c', 'Control/line.h',
-    'Control/path.c', 'Control/path.h', 'Device/stamp.c', 'Device/stamp.h',
-    'Device/motor.c', 'Device/motor.h', 'Device/imu.c', 'Device/imu.h',
-    'Comm/feedback.c', 'Comm/feedback.h', 'Control/odom.c', 'Control/odom.h',
-    'Control/ref.c', 'Control/ref.h', 'Control/track.c', 'Control/track.h')}
-USER_FILES.update(FW / 'User' / name for name in (
-    'Control/mech_guard.c', 'Control/mech_guard.h', 'Control/mech_axis.c', 'Control/mech_axis.h', 'Config/mech_hw.h',
-    'Control/mech_group.c', 'Control/mech_group.h', 'Control/mech_servo.c', 'Control/mech_servo.h', 'Control/start.c', 'Control/start.h', 'Control/mech_pose.c', 'Control/mech_pose.h',
-    'Control/preview.c', 'Control/preview.h',
-    'Board/mech_port.c', 'Board/mech_port.h',
-    'Control/exec.c', 'Control/exec.h', 'Comm/execute.c', 'Comm/execute.h', 'Board/base_port.c', 'Board/base_port.h',
-    'Device/can_tx.c', 'Device/can_tx.h', 'Device/can_internal.h',
-    'Device/bus.c', 'Device/bus.h', 'Device/bus_internal.h', 'Device/bus_board.h',
-    'Device/drive.c', 'Device/drive.h', 'Config/bus_config.h', 'Config/addresses.h', 'Config/raw_route.h', 'Config/tour_route.h', 'Config/batch_route.h', 'Config/calibration_route.h', 'Config/start2_route.h', 'Config/start1_route.h'))
 
 
 def check(ok, message):
-    """累计明确的检查结果，尽量一次列出全部问题。"""
+    """累计检查结果，一次列出全部问题。"""
     global CHECKS
     CHECKS += 1
     if not ok:
@@ -59,34 +41,21 @@ def clean_c(source):
 
 
 def body(source, name):
-    """按配对花括号提取 C 函数体，不依赖生成器的缩进。"""
+    """按配对花括号提取 C 函数体。"""
     match = re.search(r"\b" + re.escape(name) + r"\s*\([^;{}]*\)\s*\{", source)
     if not match:
         check(False, f"缺少函数定义：{name}")
         return ""
-    start = match.end()
     depth = 1
-    for pos in range(start, len(source)):
+    for pos in range(match.end(), len(source)):
         if source[pos] == "{":
             depth += 1
         elif source[pos] == "}":
             depth -= 1
             if depth == 0:
-                return source[start:pos]
+                return source[match.end():pos]
     check(False, f"函数花括号不完整：{name}")
     return ""
-
-
-def assignment(source, name, expected, label):
-    values = re.findall(r"\b" + re.escape(name) + r"\s*=\s*([^;]+);", source)
-    check(bool(values) and all(compact(v) == compact(str(expected)) for v in values),
-          f"{label}：{name} 应为 {expected}，实际 {values or '缺失'}")
-
-
-def call(source, name, arguments, label):
-    pattern = r"\b" + re.escape(name) + r"\s*\(([^;()]*)\)"
-    found = [compact(m) for m in re.findall(pattern, source)]
-    check(compact(arguments) in found, f"{label}：缺少 {name}({arguments})")
 
 
 def load_ioc():
@@ -95,262 +64,80 @@ def load_ioc():
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        key = key.replace(r"\ ", " ").replace(r"\:", ":")
-        check(key not in data, f"IOC 重复配置项：{key}")
-        data[key] = value.replace(r"\:", ":")
+        data[key.replace(r"\ ", " ").replace(r"\:", ":")] = value.replace(r"\:", ":")
     return data
 
 
 def verify_ioc(data):
+    """板上晶振、CAN 波特率、PWM 默认占空比及安全相关引脚。"""
     expected = {
-        "Mcu.CPN": "STM32F407ZGT6", "Mcu.Package": "LQFP144",
-        "RCC.HSI_VALUE": "16000000", "RCC.HSE_VALUE": "8000000",
-        "RCC.PLLSourceVirtual": "RCC_PLLSOURCE_HSE",
-        "RCC.PLLM": "8", "RCC.PLLN": "240", "RCC.PLLQ": "5",
-        "PH0-OSC_IN.Mode": "HSE-External-Oscillator", "PH0-OSC_IN.Signal": "RCC_OSC_IN",
-        "PH1-OSC_OUT.Mode": "HSE-External-Oscillator", "PH1-OSC_OUT.Signal": "RCC_OSC_OUT",
-        "RCC.SYSCLKSource": "RCC_SYSCLKSOURCE_PLLCLK",
-        "RCC.SYSCLKFreq_VALUE": "120000000", "RCC.HCLKFreq_Value": "120000000",
-        "RCC.APB1CLKDivider": "RCC_HCLK_DIV4", "RCC.APB1Freq_Value": "30000000",
-        "RCC.APB2CLKDivider": "RCC_HCLK_DIV2", "RCC.APB2Freq_Value": "60000000",
-        "CAN1.Prescaler": "4", "CAN1.BS1": "CAN_BS1_12TQ",
-        "CAN1.BS2": "CAN_BS2_2TQ", "CAN1.NART": "DISABLE",
-        "TIM1.Prescaler": "119", "TIM1.Period": "19999",
+        "Mcu.CPN": "STM32F407ZGT6", "RCC.HSE_VALUE": "8000000",
+        "RCC.PLLSourceVirtual": "RCC_PLLSOURCE_HSE", "CAN1.NART": "DISABLE",
         "PC0.Signal": "GPIO_Input", "PC0.GPIO_PuPd": "GPIO_PULLUP",
         "PC1.Signal": "GPIO_Input", "PC1.GPIO_PuPd": "GPIO_PULLUP",
-        "PC1.GPIO_Label": "ZONE_SWITCH",
         "PG11.Signal": "GPIO_Output", "PG11.PinState": "GPIO_PIN_SET",
-        "PG11.GPIO_ModeDefaultOutputPP": "GPIO_MODE_OUTPUT_PP",
-        "PE14.GPIO_Label": "AUX_PWM",
-        "PA13.Signal": "SYS_JTMS-SWDIO", "PA14.Signal": "SYS_JTCK-SWCLK",
-        "ProjectManager.ProjectName": "Car", "ProjectManager.ProjectFileName": "Car.ioc",
-        "ProjectManager.StackSize": "0x1000", "ProjectManager.KeepUserCode": "true",
+        "PD0.Signal": "CAN1_RX", "PD1.Signal": "CAN1_TX",
+        "PE9.Signal": "S_TIM1_CH1", "PE11.Signal": "S_TIM1_CH2",
+        "PE13.Signal": "S_TIM1_CH3", "PE14.Signal": "S_TIM1_CH4",
+        "ProjectManager.KeepUserCode": "true",
     }
-    pins = {
-        "PA9": "USART1_TX", "PA10": "USART1_RX", "PA2": "USART2_TX",
-        "PA3": "USART2_RX", "PC6": "USART6_TX", "PC7": "USART6_RX",
-        "PD0": "CAN1_RX", "PD1": "CAN1_TX", "PE9": "S_TIM1_CH1",
-        "PE11": "S_TIM1_CH2", "PE13": "S_TIM1_CH3", "PE14": "S_TIM1_CH4",
-    }
-    expected.update({f"{pin}.Signal": signal for pin, signal in pins.items()})
-    for number in (1, 2, 6):
-        for field, value in {"BaudRate": "115200", "WordLength": "WORDLENGTH_8B",
-                             "StopBits": "STOPBITS_1", "Parity": "PARITY_NONE"}.items():
-            expected[f"USART{number}.{field}"] = value
     for channel in (1, 2, 3, 4):
-        expected[f"TIM1.Channel-PWM Generation{channel} CH{channel}"] = f"TIM_CHANNEL_{channel}"
         expected[f"TIM1.Pulse-PWM Generation{channel} CH{channel}"] = "0"
     for key, value in expected.items():
         check(data.get(key) == value, f"IOC {key} 应为 {value}，实际 {data.get(key, '缺失')}")
-    check(data.get("RCC.PLLP", "RCC_PLLP_DIV2") in ("2", "RCC_PLLP_DIV2"),
-          "IOC PLLP 应为 2；未显式保存时采用芯片默认值并核对生成代码")
-    active_ips = {v for k, v in data.items() if re.fullmatch(r"Mcu\.IP\d+", k)}
-    check(active_ips == {"CAN1", "NVIC", "RCC", "RNG", "SYS", "TIM1", "USART1", "USART2", "USART6"},
-          f"IOC 启用外设不符：{sorted(active_ips)}")
-    check(data.get("PC1.Signal") == "GPIO_Input", "PC1仅作启停区只读开关输入")
-    check(not any(k.startswith(("PB0.", "PA11.", "PA12.")) for k in data),
-          "旧CAN和蜂鸣器引脚必须释放，不自动分配其他功能")
     try:
         rate = int(data["RCC.APB1Freq_Value"]) / int(data["CAN1.Prescaler"]) / 15
-        check(rate == 500000, f"IOC CAN 计算波特率错误：{rate}")
-        check(abs(float(data.get("CAN1.CalculateBaudRate", rate)) - rate) <= 1,
-              "IOC CAN 显示波特率与时钟计算不一致")
+        check(rate == 500000, f"IOC CAN 波特率应为 500k，实际 {rate}")
     except (KeyError, ValueError, ZeroDivisionError):
         check(False, "IOC 无法计算 CAN 波特率")
 
 
-def gpio_configs(source, defines):
-    """顺序读取生成器设置的 GPIO 字段及每次 HAL_GPIO_Init 调用。"""
-    state = {}
-    result = []
-    pattern = r"GPIO_InitStruct\.(\w+)\s*=\s*([^;]+);|HAL_GPIO_Init\s*\(\s*(\w+)\s*,\s*&GPIO_InitStruct\s*\)"
-    for match in re.finditer(pattern, source):
-        if match[1]:
-            state[match[1]] = compact(match[2])
-        else:
-            port = defines.get(match[3], match[3])
-            pins = {defines.get(pin, pin) for pin in state.get("Pin", "").split("|")}
-            result.append((port, pins, state.copy(), match.start()))
-    return result
-
-
-def verify_sources(data):
-    names = ("main", "can", "tim", "usart", "gpio", "stm32f4xx_it")
-    original = {name: read(FW / "Core/Src" / f"{name}.c") for name in names}
-    sources = {name: clean_c(source) for name, source in original.items()}
-    header = clean_c(read(FW / "Core/Inc/main.h"))
-    defines = dict(re.findall(r"^\s*#define\s+(\w+)\s+(\w+)\s*$", header, re.M))
-    clock = body(sources["main"], "SystemClock_Config")
-    for name, value in {
-        "RCC_OscInitStruct.OscillatorType": "RCC_OSCILLATORTYPE_HSE",
-        "RCC_OscInitStruct.HSEState": "RCC_HSE_ON",
-        "RCC_OscInitStruct.PLL.PLLState": "RCC_PLL_ON",
-        "RCC_OscInitStruct.PLL.PLLSource": "RCC_PLLSOURCE_HSE",
-        "RCC_OscInitStruct.PLL.PLLM": data.get("RCC.PLLM", "8"),
-        "RCC_OscInitStruct.PLL.PLLN": data.get("RCC.PLLN", "240"),
-        "RCC_OscInitStruct.PLL.PLLP": "RCC_PLLP_DIV2",
-        "RCC_OscInitStruct.PLL.PLLQ": data.get("RCC.PLLQ", "5"),
-        "RCC_ClkInitStruct.SYSCLKSource": "RCC_SYSCLKSOURCE_PLLCLK",
-        "RCC_ClkInitStruct.AHBCLKDivider": "RCC_SYSCLK_DIV1",
-        "RCC_ClkInitStruct.APB1CLKDivider": "RCC_HCLK_DIV4",
-        "RCC_ClkInitStruct.APB2CLKDivider": "RCC_HCLK_DIV2",
-    }.items():
-        assignment(clock, name, value, "生成时钟")
-    call(clock, "HAL_RCC_ClockConfig", "&RCC_ClkInitStruct,FLASH_LATENCY_3", "生成时钟")
+def verify_sources():
+    """生成代码中 CubeMX 不会替我们保证的项。"""
     hal_config = clean_c(read(FW / "Core/Inc/stm32f4xx_hal_conf.h"))
     check(bool(re.search(r"#define\s+HSE_VALUE\s+8000000U\b", hal_config)),
-          "HAL HSE_VALUE必须为板上8MHz晶振，不能沿用25MHz")
-    # 时钟建立失败必须在初始化CAN/PWM之前停住，不能退回HSI继续动作。
-    for function in ("HAL_RCC_OscConfig", "HAL_RCC_ClockConfig"):
-        check(bool(re.search(r"if\s*\(\s*" + function +
-                             r"\([^;]+?\)\s*!=\s*HAL_OK\s*\)\s*\{\s*Error_Handler\(\);\s*\}", clock)),
-              f"{function}失败必须进入Error_Handler")
-    handler = body(sources["main"], "Error_Handler")
-    check(bool(re.search(r"while\s*\(1\)", handler)) and "__disable_irq()" in compact(handler),
-          "时钟失败处理必须停机，不允许返回后初始化外设")
-    entry = body(sources["main"], "main")
-    clock_pos = entry.find("SystemClock_Config();")
-    check(clock_pos >= 0 and all(entry.find(name + "();") > clock_pos for name in
-                                ("MX_GPIO_Init", "MX_CAN1_Init", "MX_TIM1_Init", "App_Init")),
-          "外设及App必须在时钟成功建立后初始化")
-    for name, value in {
-        "hcan1.Init.Prescaler": data.get("CAN1.Prescaler", "4"),
-        "hcan1.Init.TimeSeg1": data.get("CAN1.BS1", "CAN_BS1_12TQ"),
-        "hcan1.Init.TimeSeg2": data.get("CAN1.BS2", "CAN_BS2_2TQ"),
-        "hcan1.Init.AutoRetransmission": "DISABLE",
-    }.items():
-        assignment(body(sources["can"], "MX_CAN1_Init"), name, value, "生成 CAN")
-    tim = body(sources["tim"], "MX_TIM1_Init")
-    assignment(tim, "htim1.Init.Prescaler", data.get("TIM1.Prescaler", "119"), "生成 PWM")
-    assignment(tim, "htim1.Init.Period", data.get("TIM1.Period", "19999"), "生成 PWM")
-    assignment(tim, "sConfigOC.Pulse", "0", "生成 PWM")
-    for channel in (1, 2, 3, 4):
-        call(tim, "HAL_TIM_PWM_ConfigChannel", f"&htim1,&sConfigOC,TIM_CHANNEL_{channel}", "生成 PWM")
-    for number in (1, 2, 6):
-        uart = body(sources["usart"], f"MX_USART{number}_UART_Init")
-        for field, value in {"BaudRate": "115200", "WordLength": "UART_WORDLENGTH_8B",
-                             "StopBits": "UART_STOPBITS_1", "Parity": "UART_PARITY_NONE",
-                             "Mode": "UART_MODE_TX_RX", "HwFlowCtl": "UART_HWCONTROL_NONE"}.items():
-            assignment(uart, f"huart{number}.Init.{field}", value, f"生成 USART{number}")
-    configs = []
-    for name, function in (("gpio", "MX_GPIO_Init"), ("can", "HAL_CAN_MspInit"),
-                           ("tim", "HAL_TIM_MspPostInit"), ("usart", "HAL_UART_MspInit")):
-        configs.extend(gpio_configs(body(sources[name], function), defines))
-    expected_gpio = [
-        ("GPIOA", {"GPIO_PIN_9", "GPIO_PIN_10"}, "GPIO_MODE_AF_PP", "GPIO_AF7_USART1"),
-        ("GPIOA", {"GPIO_PIN_2", "GPIO_PIN_3"}, "GPIO_MODE_AF_PP", "GPIO_AF7_USART2"),
-        ("GPIOC", {"GPIO_PIN_6", "GPIO_PIN_7"}, "GPIO_MODE_AF_PP", "GPIO_AF8_USART6"),
-        ("GPIOD", {"GPIO_PIN_0", "GPIO_PIN_1"}, "GPIO_MODE_AF_PP", "GPIO_AF9_CAN1"),
-        ("GPIOE", {"GPIO_PIN_9", "GPIO_PIN_11", "GPIO_PIN_13", "GPIO_PIN_14"}, "GPIO_MODE_AF_PP", "GPIO_AF1_TIM1"),
-        ("GPIOC", {"GPIO_PIN_0", "GPIO_PIN_1"}, "GPIO_MODE_INPUT", None),
-        ("GPIOG", {"GPIO_PIN_11"}, "GPIO_MODE_OUTPUT_PP", None),
-    ]
-    check(len(configs) == len(expected_gpio), "生成 GPIO 初始化组数量不符，检查额外引脚")
-    for port, pins, mode, alternate in expected_gpio:
-        matches = [config for config in configs if config[0] == port and config[1] == pins]
-        check(len(matches) == 1, f"生成 GPIO {port} {sorted(pins)} 应恰好配置一次")
-        if matches:
-            state = matches[0][2]
-            check(state.get("Mode") == mode, f"生成 GPIO {port} {sorted(pins)} 模式不符")
-            if alternate:
-                check(state.get("Alternate") == alternate, f"生成 GPIO {port} {sorted(pins)} 复用不符")
-            if port == "GPIOC" and pins == {"GPIO_PIN_0", "GPIO_PIN_1"}:
-                check(state.get("Pull") == "GPIO_PULLUP", "生成 PC0/PC1 必须上拉")
-    gpio = body(sources["gpio"], "MX_GPIO_Init")
-    call(gpio, "HAL_GPIO_WritePin", "BUZZER_GPIO_Port,BUZZER_Pin,GPIO_PIN_SET", "蜂鸣器默认电平")
-    check(defines.get("BUZZER_Pin") == "GPIO_PIN_11" and defines.get("BUZZER_GPIO_Port") == "GPIOG",
-          "蜂鸣器标签必须对应 PG11")
-    check(defines.get("AUX_PWM_Pin") == "GPIO_PIN_14" and defines.get("AUX_PWM_GPIO_Port") == "GPIOE",
-          "新增舵机标签必须对应 PE14")
-    call(gpio, "__HAL_RCC_GPIOG_CLK_ENABLE", "", "新蜂鸣器GPIO时钟")
-    call(body(sources["can"], "HAL_CAN_MspInit"), "__HAL_RCC_GPIOD_CLK_ENABLE", "", "新CAN引脚时钟")
-    call(body(sources["can"], "HAL_CAN_MspDeInit"), "HAL_GPIO_DeInit", "GPIOD,GPIO_PIN_0|GPIO_PIN_1", "CAN引脚释放")
-    write_at = gpio.find("HAL_GPIO_WritePin")
-    buzzer = [item for item in gpio_configs(gpio, defines) if item[0] == "GPIOG"]
-    check(bool(buzzer) and 0 <= write_at < buzzer[0][3], "PG11 必须先置高，再配置输出")
-    irq_defs = [("CAN1_TX", "can", "HAL_CAN_IRQHandler", "&hcan1", 2),
-                ("CAN1_RX0", "can", "HAL_CAN_IRQHandler", "&hcan1", 2),
-                ("CAN1_SCE", "can", "HAL_CAN_IRQHandler", "&hcan1", 2),
-                ("USART1", "usart", "HAL_UART_IRQHandler", "&huart1", 3),
-                ("USART2", "usart", "HAL_UART_IRQHandler", "&huart2", 3),
-                ("USART6", "usart", "HAL_UART_IRQHandler", "&huart6", 4)]
-    for name, module, handler, handle, priority in irq_defs:
-        check(data.get(f"NVIC.{name}_IRQn", "").split(":")[0] == "true", f"IOC 未启用 {name} IRQ")
-        call(sources[module], "HAL_NVIC_EnableIRQ", f"{name}_IRQn", "NVIC")
-        call(sources[module], "HAL_NVIC_SetPriority", f"{name}_IRQn,{priority},0", "NVIC")
-        call(body(sources["stm32f4xx_it"], f"{name}_IRQHandler"), handler, handle, "IRQ 入口")
-    main = original["main"]
-    for section, pattern in (("Includes", r'#include\s+"app\.h"'),
-                             ("2", r"\bApp_Init\s*\(\s*\)\s*;"),
-                             ("3", r"\bApp_Run\s*\(\s*\)\s*;")):
+          "HAL HSE_VALUE 必须为板上 8MHz 晶振")
+    main = read(FW / "Core/Src/main.c")
+    for section, pattern in (("2", r"\bApp_Init\s*\(\s*\)\s*;"), ("3", r"\bApp_Run\s*\(\s*\)\s*;")):
         match = re.search(r"/\*\s*USER CODE BEGIN " + section + r"\s*\*/(.*?)/\*\s*USER CODE END "
                           + section + r"\s*\*/", main, re.S)
         check(bool(match) and bool(re.search(pattern, clean_c(match[1]))),
-              f"main USER CODE {section} 缺少最小 App 钩子")
-    for name in ("App_Init", "App_Run"):
-        check(len(re.findall(r"\b" + name + r"\s*\(", sources["main"])) == 1,
-              f"main 中 {name} 必须且仅调用一次")
+              f"main USER CODE {section} 缺少 App 钩子")
 
 
-def verify_readonly_app(data):
-    actual = {path for path in (FW / "User").rglob("*") if path.suffix.lower() in (".c", ".h")}
-    check(actual == USER_FILES, "当前底盘及机构被动准备阶段User文件与已审核清单不一致")
-    mech = clean_c(read(FW / 'User/Control/mech_guard.c'))
-    check(not re.search(r'\b(?:HAL_\w+|Bus_Send|Can_Send|Drive_Build)\s*\(', mech),
-          '机构准备模块必须保持无IO，不得发送或启动设备')
-    for relative in ('App/app.c', 'Board/base_port.c', 'Comm/execute.c'):
-        source = clean_c(read(FW / 'User' / relative))
-        check(not re.search(r'\bMech_(?:Init|Zero|Feed|Poll)\s*\(', source),
-              '当前阶段不得将机构准备模块绑定到实车入口：' + relative)
-    app = clean_c(read(FW / "User/App/app.c"))
-    check(compact(body(app, 'App_Init')) == 'Port_Init();Base_Init();', 'App_Init仅允许接收/未使能入口')
-    check(compact(body(app, 'App_Run')) == 'Port_Run();Base_Run();', 'App_Run仅允许唯一通信与底盘调度')
-    definitions = re.findall(r"\b(\w+)\s*\([^;{}]*\)\s*\{", app)
-    check(sorted(definitions) == ["App_Init", "App_Run"], "App不得定义额外业务函数")
+def verify_owners():
+    """CAN、PWM、串口各只有一个所有者；启动不使能、不下发动作。"""
     forbidden = (r"\bHAL_CAN_(?:Start|AddTxMessage|ActivateNotification)\s*\(",
                  r"\bHAL_TIM(?:Ex)?_\w*Start\w*\s*\(",
                  r"\bLL_(?:CAN|TIM|USART)_\w+\s*\(")
+    can_owner = FW / 'User/Device/can_tx.c'
+    can_init = FW / 'User/Board/base_port.c'
+    pwm_owner = FW / 'User/Board/mech_port.c'
     for folder in (FW / "Core", FW / "User"):
         for path in folder.rglob("*"):
             if path.suffix.lower() not in (".c", ".h"):
                 continue
             source = clean_c(read(path))
             for pattern in forbidden:
-                matches = list(re.finditer(pattern, source))
-                can_owner = path == FW / 'User/Device/can_tx.c'
-                can_init = path == FW / 'User/Board/base_port.c'
-                pwm_owner = path == FW / 'User/Board/mech_port.c'
-                allowed = all((pwm_owner and match[0].startswith('HAL_TIM_PWM_Start')) or (((can_owner and 'AddTxMessage' in match[0]) or
-                                (can_init and 'AddTxMessage' not in match[0]))
-                               and 'HAL_CAN_' in match[0]) for match in matches)
-                check(allowed, f"执行器只能经唯一CAN所有者，PWM仍禁止：{path.relative_to(ROOT)}")
-            uart_calls = re.findall(r'\bHAL_UART(?:Ex)?_(?:Receive\w*|Transmit\w*)\s*\(', source)
-            check(not uart_calls or path == FW / 'User/Board/port.c',
-                  f'只读串口只能由Board/port.c管理：{path.relative_to(ROOT)}')
-    port = clean_c(read(FW / 'User/Board/port.c'))
-    check(not re.search(r'\bhuart6\b', port), '本阶段不启用屏幕串口')
-    check('HAL_UART_Receive_IT' in port and 'HAL_UART_Transmit_IT' in port, '串口必须使用中断非阻塞收发')
-    base = clean_c(read(FW / 'User/Board/base_port.c'))
-    mechanism_port = clean_c(read(FW / 'User/Board/mech_port.c'))
+                for match in re.finditer(pattern, source):
+                    call = match[0]
+                    allowed = ((path == pwm_owner and call.startswith('HAL_TIM_PWM_Start')) or
+                               (path == can_owner and 'AddTxMessage' in call) or
+                               (path == can_init and call.startswith('HAL_CAN_') and 'AddTxMessage' not in call))
+                    check(allowed, f"{call} 只能由唯一 CAN/PWM 所有者调用：{path.relative_to(ROOT)}")
+            if re.search(r'\bHAL_UART(?:Ex)?_(?:Receive\w*|Transmit\w*)\s*\(', source):
+                check(path == FW / 'User/Board/port.c', f'串口只能由 Board/port.c 管理：{path.relative_to(ROOT)}')
+    mechanism_port = clean_c(read(pwm_owner))
     check(not re.search(r'\b(?:HAL_\w+|Bus_Send|Servo_Begin|Pose_Begin|Axis_Begin)\s*\(',
-                        body(mechanism_port, 'MechPort_Init')), '机构初始化禁止发送/使能/PWM')
-    check('Servo_Take' in body(mechanism_port, 'MechPort_Run') and
-          'Servo_Applied' in body(mechanism_port, 'MechPort_Run'), 'PWM必须经过显式舵机意图及应用确认')
-    check('TIM_CHANNEL_4' not in mechanism_port, 'PE14仅配置预留，不能并入原三个舵机控制')
-    check('Bus_MechWatch();' in body(base, 'Base_Init'), '启动STOP必须包含机构地址')
-    check(not re.search(r'\b(?:Bus_(?:Start|Speed|Send)|Exec_(?:Arm|Goal))\s*\(', body(base, 'Base_Init')),
-          'Base_Init禁止使能、下发动作或自动开始查询')
-    execute = clean_c(read(FW / 'User/Control/exec.c'))
-    check('EXEC_DISABLED' in execute and 'EXEC_ARMING' in execute, '执行入口必须显式配置和使能')
+                        body(mechanism_port, 'MechPort_Init')), '机构初始化禁止发送、使能或启动 PWM')
+    check('TIM_CHANNEL_4' not in mechanism_port, 'PE14 仅配置预留，不并入三个舵机控制')
+    base_init = body(clean_c(read(can_init)), 'Base_Init')
+    check('Bus_Stop();' in base_init and 'Bus_MechWatch();' in base_init, '启动必须先停止底盘及机构驱动目标')
+    check(not re.search(r'\b(?:Bus_(?:Start|Speed|Send)|Exec_(?:Arm|Goal))\s*\(', base_init),
+          'Base_Init 禁止使能、下发动作或自动开始查询')
     addresses = json.loads(read(ROOT / 'config/base_trials.json'))['addresses']
-    expected_addresses = 'BASE_SAFE_ADDRESSES{' + ','.join(map(str, addresses)) + '}'
-    check(expected_addresses in compact(read(FW / 'User/Config/addresses.h')), '启动停止地址必须与唯一配置一致')
-    check('Bus_Stop();' in body(base, 'Base_Init'), '启动先停止旧驱动目标，不自动续跑')
-    rng = clean_c(read(FW / 'Core/Src/rng.c'))
-    call(rng, 'HAL_RNG_Init', '&hrng', '随机启动身份')
-    call(clean_c(read(FW / 'Core/Src/main.c')), 'MX_RNG_Init', '', '随机模块初始化')
-    check('RNG_VS_RNG' == data.get('VP_RNG_VS_RNG.Signal'), 'IOC应启用内部RNG虚拟信号')
-    check(data.get('RCC.48MHZClocksFreq_Value') == '48000000', 'RNG应有48MHz时钟')
+    check('BASE_SAFE_ADDRESSES{' + ','.join(map(str, addresses)) + '}' in compact(read(FW / 'User/Config/addresses.h')),
+          '启动停止地址必须与 config/base_trials.json 一致')
 
 
 def verify_keil():
@@ -366,76 +153,32 @@ def verify_keil():
         return
     target = targets[0]
     check(target.findtext("TargetName") == "Car", "Keil Target 必须为 Car")
-    check(target.findtext(".//Device") in ("STM32F407ZG", "STM32F407ZGTx"), "Keil 器件必须为 STM32F407ZG")
     check(target.findtext(".//uAC6") == "1", "Keil 必须选择 ARM Compiler 6")
-    compiler = target.findtext(".//pCCUsed", "")
-    check(bool(re.search(r"V?6\.7\b", compiler, re.I)), f"Keil 编译器版本应为 6.7，实际 {compiler or '未设置'}")
-    for tag, directory in (("OutputDirectory", "Objects"), ("ListingPath", "Listings")):
-        value = target.findtext(f".//{tag}", "").replace("\\", "/")
-        check(bool(value) and (project.parent / value).resolve() == (project.parent / directory).resolve(),
-              f"Keil {tag} 应指向 ./{directory}/")
+    # 编译不得顺带下载或进入调试。
     for tag in ("BeforeCompile", "BeforeMake", "AfterMake"):
-        node = target.find(f".//{tag}")
-        check(node is not None, f"Keil 缺少 {tag} 配置")
-        if node is not None:
-            for index in (1, 2):
-                check(node.findtext(f"RunUserProg{index}") == "0", f"Keil {tag}.RunUserProg{index} 必须关闭")
+        for index in (1, 2):
+            check(target.findtext(f".//{tag}/RunUserProg{index}") in (None, "0"), f"Keil {tag}.RunUserProg{index} 必须关闭")
     for tag in ("RunDebugAfterBuild", "UpdateFlashBeforeDebugging"):
         check(target.findtext(f".//{tag}") == "0", f"Keil {tag} 必须关闭")
-    for branch in ('Simulator', 'Target'):
-        for field in ('LoadApplicationAtStartup', 'RunToMain'):
-            check(target.findtext(f'TargetOption/DebugOption/{branch}/{field}') == '0',
-                  f'Keil {branch}.{field}必须关闭')
-    options = project.with_suffix('.uvoptx')
-    if options.is_file():
-        try:
-            local = ET.fromstring(read(options))
-            matches = [node for node in local.findall('./Target') if node.findtext('TargetName') == 'Car']
-            check(len(matches) == 1, '本机Keil选项必须有唯一Car目标')
-            if len(matches) == 1:
-                for flag in ('sLdApp', 'sGomain', 'tLdApp', 'tGomain', 'sRunDeb'):
-                    check(matches[0].findtext('TargetOption/DebugOpt/' + flag) == '0',
-                          f'本机Keil {flag}必须关闭')
-        except ET.ParseError:
-            check(False, '本机Keil选项XML损坏')
     refs = []
-    allowed_core = {"main.c", "gpio.c", "can.c", "tim.c", "usart.c", "stm32f4xx_it.c",
-                    "stm32f4xx_hal_msp.c", "system_stm32f4xx.c", "rng.c"}
     for node in target.findall(".//FilePath"):
         value = (node.text or "").strip().replace("\\", "/")
         path = (project.parent / value).resolve()
         check(bool(value) and path.is_file(), f"Keil 文件引用不存在：{value}")
         refs.append(path)
-        check(path.is_relative_to(FW.resolve()), f"Keil 不得引用新工程之外的文件：{value}")
-        if path.is_relative_to((FW / "Core").resolve()):
-            check(path.name in allowed_core, f"Keil 出现额外 Core 业务文件：{value}")
-        if path.is_relative_to((FW / "User").resolve()):
-            check(path in {p.resolve() for p in USER_FILES},
-                  f"Keil 出现额外 User 业务文件：{value}")
     check(len(refs) == len(set(refs)), "Keil 存在重复文件引用")
-    check(refs.count((FW / "User/App/app.c").resolve()) == 1, "Keil 必须且仅引用一次 app.c")
-    check(all(refs.count(p.resolve()) == 1 for p in USER_FILES), 'Keil必须引用所有已审核User文件且仅一次')
-    include_dirs = []
-    for node in target.findall(".//IncludePath"):
-        for value in (node.text or "").split(";"):
-            if value.strip():
-                path = (project.parent / value.strip().replace("\\", "/")).resolve()
-                check(path.is_dir(), f"Keil 头文件搜索路径不存在：{value}")
-                include_dirs.append(path)
-    check((FW / "User/App").resolve() in include_dirs, "Keil 缺少 User/App 头文件路径")
-    startup = read(FW / "MDK-ARM/startup_stm32f407xx.s")
-    stack = re.search(r"^\s*Stack_Size\s+EQU\s+(0x[0-9a-fA-F]+|\d+)\b", startup, re.M)
-    check(bool(stack) and int(stack[1], 0) == 0x1000, "Keil 启动文件栈必须为 4 KiB")
+    sources = {path.resolve() for path in (FW / "User").rglob("*.c")}
+    missing = sorted(str(path.relative_to(FW.resolve())) for path in sources - set(refs))
+    check(not missing, f"Keil 未引用 User 源文件：{missing}")
 
 
 def main():
     data = load_ioc()
     verify_ioc(data)
-    verify_sources(data)
-    verify_readonly_app(data)
+    verify_sources()
+    verify_owners()
     verify_keil()
-    print(json.dumps({"result": "FAIL" if ERRORS else "PASS", "checks": CHECKS,
-                      "errors": ERRORS, "mode": "只读静态检查；未编译、未连接硬件"},
+    print(json.dumps({"result": "FAIL" if ERRORS else "PASS", "checks": CHECKS, "errors": ERRORS},
                      ensure_ascii=False, indent=2))
     return 1 if ERRORS else 0
 

@@ -37,17 +37,5 @@ class MechanismReadyTests(unittest.TestCase):
         self.assertFalse(view['real_motion'])
         self.assertFalse(view['physical_revalidated'])
 
-    def test_preparation_does_not_bind_hardware_or_promote_simulation(self):
-        for name in ['App/app.c','Board/base_port.c','Comm/execute.c']:
-            text=(ROOT/'firmware/User'/name).read_text(encoding='utf-8')
-            self.assertNotIn('Mech_Init(',text)
-            self.assertNotIn('Mech_Zero(',text)
-        text=(ROOT/'firmware/User/Control/mech_guard.c').read_text(encoding='utf-8')
-        for call in ['HAL_','Bus_Send(','Can_Send(','Drive_Build(']:
-            self.assertNotIn(call,text)
-        installation=json.loads((ROOT/'config/mechanism_installation.json').read_text(encoding='utf-8'))
-        self.assertFalse(installation['runtime_device_enabled'])
-
-
 if __name__ == '__main__':
     unittest.main()

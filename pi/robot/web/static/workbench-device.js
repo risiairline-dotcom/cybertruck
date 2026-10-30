@@ -1,3 +1,4 @@
+import {firmwareSince} from './workbench-firmware.js?v=1';
 import {setText, setSteps} from './workbench-dom.js?v=1';
 import {axisRateText} from './workbench-axis-profile.js?v=1';
 import {initSequence} from './workbench-sequence.js?v=48.1';
@@ -252,7 +253,7 @@ export function initDevice(root) {
         el('prepare').disabled=!permit('prepare');
         el('home').disabled=!permit('home');el('home-confirm').disabled=!permit('home_confirm');
         setText(el('home-state'),({0:'未初始化',1:'等待输出',2:'已输出 · 等待稳定',3:'等待实物确认',4:'0°参考已确认',5:'已中止'})[value.home?.state]||'待核对');
-        setText(el('home-note'),!['GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'].includes(value.firmware)?'一键回零需要GC-BASE-0.3.34；当前固件仍可使用高级手动参考。':value.home?.state===3?'请目视确认三个舵机均已到命令0°且停止，再勾选现场确认并建立参考；软件等待时间不代表真实到位。':value.home?.state===4?'本次0°参考已由人工确认，后续可直接输入目标角和指令速度。':'先完成两轴人工建零并进入手动调试；确认三路可安全回0度后才点击，不会自动回零。');
+        setText(el('home-note'),!firmwareSince(value.firmware, 34)?'一键回零需要GC-BASE-0.3.34；当前固件仍可使用高级手动参考。':value.home?.state===3?'请目视确认三个舵机均已到命令0°且停止，再勾选现场确认并建立参考；软件等待时间不代表真实到位。':value.home?.state===4?'本次0°参考已由人工确认，后续可直接输入目标角和指令速度。':'先完成两轴人工建零并进入手动调试；确认三路可安全回0度后才点击，不会自动回零。');
         el('recover').disabled=!canRecover(value,!!token,pending||renewalUncertain);
         setText(el('recovery-note'),value.recovery?.status && value.recovery.status!=='IDLE'
             ? `恢复 ${value.recovery.status}：${value.recovery.reason}`
@@ -264,7 +265,7 @@ export function initDevice(root) {
         setText(el('mode-state'),value.manual_debug?'手动调试 · 人工核对避让':'姿态互锁模式');
         const tuning=manualTuning(value),armMax=armMaximum(value),gripMax=gripMaximum(value);
         setText(el('grip-note'),`默认夹持目标${gripHold}°，当前安全上限${gripMax}°；0°观察、60°松开。目标在范围内单独填写，完成后持续PWM保持，不是力矩设定。`);
-        setText(el('angle-note'),tuning?`转臂手动0～${armMax}°，0°直接使用原PWM换算，不重定义当前姿态；实际角度仍需核对。${['GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'].includes(value.firmware)?' PE11转臂使用S曲线；PE9料盘、PE13夹爪按所填速度匀速步进。':['GC-BASE-0.3.35','GC-BASE-0.3.36'].includes(value.firmware)?' 当前三路采用S曲线平滑起停，所填速度为上限。':''}`:'转臂当前按83～180°校验；进入0.3.32手动模式后开放0～359°。');
+        setText(el('angle-note'),tuning?`转臂手动0～${armMax}°，0°直接使用原PWM换算，不重定义当前姿态；实际角度仍需核对。${firmwareSince(value.firmware, 37)?' PE11转臂使用S曲线；PE9料盘、PE13夹爪按所填速度匀速步进。':['GC-BASE-0.3.35','GC-BASE-0.3.36'].includes(value.firmware)?' 当前三路采用S曲线平滑起停，所填速度为上限。':''}`:'转臂当前按83～180°校验；进入0.3.32手动模式后开放0～359°。');
         setText(el('range-note'),tuning?'手动取消49/50mm上限；0为最高/最近端，下降和伸出为正。'+
             (value.manual_policy?`到位容差${(value.manual_policy.endpoint_tolerance_um??value.manual_policy.tolerance_um)/1000}mm；按所填速度执行及驱动器原加减速，不额外拆段停车。`:
              value.axis_zero_policy?`目标≤${value.axis_zero_policy.target_max_um/1000}mm时，执行速度最高${value.axis_zero_policy.max_rpm}RPM；保存原值不变。`:''):
@@ -277,7 +278,7 @@ export function initDevice(root) {
                 if(editingManual)el(`target-${a.id}`).removeAttribute('max');else el(`target-${a.id}`).max=a.max;
                 el(`rpm-${a.id}`).max=editingManual?3000:30;
                 const accel=el(`accel-${a.id}`).valueAsNumber;
-                const accelBlocked=accel!==1 && !['GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'].includes(value.firmware);
+                const accelBlocked=accel!==1 && !firmwareSince(value.firmware, 42);
                 el(`move-${a.id}`).disabled=!permit('move')||accelBlocked;
                 el(`move-${a.id}`).title=accelBlocked?'当前固件固定acc=1；可编辑草稿，烧录0.3.42后执行':'';
                 const accepted=acceptedEnables.has(a.id);el(`enable-${a.id}`).disabled=!permit('enable')||accepted;

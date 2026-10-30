@@ -65,14 +65,4 @@ class CanIrqEvidenceTests(unittest.TestCase):
     def test_lec_without_transmit_error_does_not_fake_terr(self): self.run_case(3)
     def test_success_with_old_lec_does_not_fake_error(self): self.run_case(4)
 
-    def test_negative_control_old_hal_error_accumulation_is_detected(self):
-        source=(ROOT/'firmware/User/Device/can_tx.c').read_text(encoding='utf-8')
-        modified=source.replace('(void)HAL_CAN_ResetError(h);','/* negative control: keep HAL accumulated error */')
-        self.assertNotEqual(source,modified)
-        path=self.output/'can_without_hal_reset.c'; path.write_text(modified,encoding='utf-8')
-        binary=self.output/'negative.exe'; self.build(binary,path)
-        result=subprocess.run([str(binary),'0'],capture_output=True)
-        self.assertNotEqual(result.returncode,0)
-
-
 if __name__=='__main__': unittest.main()

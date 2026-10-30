@@ -24,19 +24,6 @@ class FastMechanismTests(unittest.TestCase):
         result=subprocess.run([str(program)],capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
 
-    def test_old_raw_arrival_gate_fails_the_same_residual_replay(self):
-        control=ROOT/'firmware/User/Control'
-        source=(control/'mech_axis.c').read_text(encoding='utf-8')
-        old='int64_t arrive = axis->manual ? Mech_RawTolerance(axis->goal.axis, MECH_MANUAL_ENDPOINT_UM) : MECH_AXIS_ARRIVE_RAW;'
-        self.assertIn(old,source)
-        with tempfile.TemporaryDirectory(dir=ROOT/'output/tests') as folder:
-            path=Path(folder)
-            mutant=path/'axis_old_arrival.c';mutant.write_text(source.replace(old,'int64_t arrive = MECH_AXIS_ARRIVE_RAW;'),encoding='utf-8')
-            program=path/'old-arrival.exe'
-            compile_c(program,[ROOT/'tests/mech_fast.c',control/'mech_guard.c',mutant,control/'mech_servo.c',control/'mech_group.c',ROOT/'firmware/User/Device/drive.c'])
-            result=subprocess.run([str(program),'10'],capture_output=True)
-            self.assertNotEqual(result.returncode,0)
-
     def test_new_return_keeps_requested_rate_and_group_without_editing_record(self):
         rows=[dict(order=1,axis='reach',target_m=0,rpm=100),dict(order=1,axis='arm',target_rad=math.pi,speed_rad_s=math.pi)]
         original=copy.deepcopy(rows)

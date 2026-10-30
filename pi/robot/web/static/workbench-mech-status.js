@@ -1,3 +1,4 @@
+import {firmwareSince} from './workbench-firmware.js?v=1';
 /* 只解释真实反馈；不解锁故障、不推定实物到位，也不发送请求。 */
 const faults = {
     1:'人工零点未建立', 2:'机构反馈超过250毫秒', 3:'机构尚未稳定',
@@ -57,5 +58,5 @@ export function mechanismNotice(state, waiting='') {
     if (!m.zero_valid) return {kind:'muted',text:'尚未建零；接入反馈后，核对升降最高、伸缩最近端再建零。'};
     if (!state.manual_debug) return {kind:'muted',text:'准备已就绪，请进入手动调试，再执行单轴或舵机。'};
     return {kind:'ready',text:'上一操作已结束，可输入并执行下一目标；舵机命令完成不代表实物角度已测得。'+
-        (['GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'].includes(state.firmware)?' 手动机械调试已取消车轮1RPM限制，通信和驱动器保护继续生效。':'')};
+        (firmwareSince(state.firmware, 36)?' 手动机械调试已取消车轮1RPM限制，通信和驱动器保护继续生效。':'')};
 }

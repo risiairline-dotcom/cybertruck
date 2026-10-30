@@ -1,3 +1,4 @@
+import {firmwareSince} from './workbench-firmware.js?v=1';
 import {setText} from './workbench-dom.js?v=1';
 
 /* 沿用机械页控制权及保活；自动对中使用Pi本地订阅，不采信浏览器像素报文。 */
@@ -96,7 +97,7 @@ export function initArrival(root, current, owned, busy, command, message) {
             el('version').replaceChildren(...(s.sequences||[]).map((r,i)=>new Option(`${r.id} · v${r.revision}`,i)));
             if([...el('version').options].some(o=>o.value===old))el('version').value=old;
         }
-        const compatible=['GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'].includes(s.firmware);
+        const compatible=firmwareSince(s.firmware, 45);
         const ready=s.connected&&owned()&&!busy()&&s.site_ready&&compatible&&
             !s.action_locked&&!s.mechanism?.fault&&!s.base?.fault;
         const keyState=s.physical_start||{},keyFresh=s.connected&&keyState.age_ms>=0&&keyState.age_ms<250;
@@ -109,7 +110,7 @@ export function initArrival(root, current, owned, busy, command, message) {
             ['PREPARE','COMMIT','CONFIG','KEY_PREPARE','KEY_REQUEST'].includes(phase)?'正在准备，先不要按PC0。':
             '尚未等待PC0；确认观察姿态后准备。');
         setText(el('status'),!compatible?'当前固件未接入微调，需要配套固件验收':
-            `${phase} ${a.reason||''} ${c.status||''} ${c.reason||''}${phase==='MOVING'&&['GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'].includes(s.firmware)?'：小步移动与停车取样中，请等待本步完成':''}${phase==='WAIT_PC0'?c.mode==='auto'?'：现在按PC0后将自动小步对中':'：现在可按一次PC0，随后由方向按钮执行小位移':''}`);
+            `${phase} ${a.reason||''} ${c.status||''} ${c.reason||''}${phase==='MOVING'&&firmwareSince(s.firmware, 47)?'：小步移动与停车取样中，请等待本步完成':''}${phase==='WAIT_PC0'?c.mode==='auto'?'：现在按PC0后将自动小步对中':'：现在可按一次PC0，随后由方向按钮执行小位移':''}`);
         el('start').disabled=!ready||!s.manual_debug||!s.mechanism?.zero_valid||
             !['IDLE','DONE','FAILED'].includes(phase);
         el('auto-start').disabled=el('start').disabled||!c.calibration_available;

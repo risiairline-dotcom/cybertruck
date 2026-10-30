@@ -6,6 +6,7 @@ import secrets
 import struct
 
 from .can_capture import CaptureReader, decode_page
+from .capabilities import firmware_since
 
 
 class Recovery:
@@ -40,7 +41,7 @@ class Recovery:
 
     def start(self, link, args, now):
         m = link.actual
-        if (self.active or link.firmware not in ('GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') or not link.commissioning or
+        if (self.active or not firmware_since(link.firmware, 33) or not link.commissioning or
                 link.latched or not link.bound or not link.action_locked or not link.stop_acknowledged or
                 now-link.actual_at >= .25 or now-link.base_at >= .25 or not link.base.get('stopped') or
                 not m.get('attached') or m.get('config_mask') != 3 or
@@ -99,7 +100,7 @@ class Recovery:
                 return None
             if str(link.boot) == self.record['boot']:
                 return self.fail('未确认新的启动身份，恢复未完成')
-            if link.firmware not in ('GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') or link.base.get('fault') or link.actual.get('fault'):
+            if not firmware_since(link.firmware, 33) or link.base.get('fault') or link.actual.get('fault'):
                 return self.fail('重启后故障仍存在；检查线路，不自动重试')
             if not link.base.get('stopped'):
                 return None

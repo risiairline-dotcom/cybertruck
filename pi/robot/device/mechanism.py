@@ -3,6 +3,7 @@
 import math
 import struct
 from collections import deque
+from .capabilities import firmware_since
 from .link import Link
 from . import protocol as p
 from .execution import STATUS_DATA
@@ -20,7 +21,7 @@ AXIS_ZERO_MAX_RPM = 30  # 近零位使用旧轴低速档，保存表中的原速
 
 def grip_limit(firmware):
     """新板复用旧工程100度上限；旧固件继续按98度限制，不提前放行。"""
-    return 100000 if firmware in ('GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else 98000
+    return 100000 if firmware_since(firmware, 38) else 98000
 
 
 def payload(action, args, state, token):
@@ -64,7 +65,7 @@ def payload(action, args, state, token):
         if actuator in ('lift', 'reach'):
             rpm = args.get('rpm', 5)
             accel = acceleration(args.get('accel',1))
-            if accel!=1 and args.get('_firmware') not in ('GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'):
+            if accel!=1 and not firmware_since(args.get('_firmware'), 42):
                 raise ValueError('可调轴加速度需要GC-BASE-0.3.42；旧固件固定acc=1')
             tuned = args.get('_manual_tuning') is True
             limit = 3000 if tuned else 30
@@ -73,7 +74,7 @@ def payload(action, args, state, token):
             target = integer(args.get('target_m'), 1e6)
             if target < 0:
                 raise ValueError('最高/最近端为0，下降和伸出为正')
-            if tuned and target <= AXIS_ZERO_ZONE_UM and args.get('_firmware') not in ('GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'):
+            if tuned and target <= AXIS_ZERO_ZONE_UM and not firmware_since(args.get('_firmware'), 39):
                 rpm = min(rpm, AXIS_ZERO_MAX_RPM)
             timeout = 15000
             if tuned:
@@ -83,14 +84,14 @@ def payload(action, args, state, token):
                 if timeout > 300000:
                     raise ValueError('本次位移按所填速度预计超过300秒，请分段调试')
             return 52, prefix + struct.pack('<IiIHB', action_id,
-                target, timeout, rpm, int(actuator == 'reach')) + (bytes([accel]) if args.get('_firmware') in ('GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else b'')
+                target, timeout, rpm, int(actuator == 'reach')) + (bytes([accel]) if firmware_since(args.get('_firmware'), 42) else b'')
         channel = dict(tray=1, arm=2, gripper=3).get(actuator)
         if args.get('accel',1)!=1:
             raise ValueError('轴加速度档位只适用于升降和伸缩')
         if not channel:
             raise ValueError('执行器无效')
         target = integer(args.get('target_rad'), 180000 / math.pi)
-        arm_max = 359000 if args.get('_firmware') in ('GC-BASE-0.3.32','GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else 270000
+        arm_max = 359000 if firmware_since(args.get('_firmware'), 32) else 270000
         if (args.get('_manual_tuning') is True or channel == 3) and not 0 <= target <= {1:270000,2:arm_max,3:grip_limit(args.get('_firmware'))}[channel]:
             raise ValueError('舵机命令角超出允许范围，0度不加偏置')
         speed = args.get('speed_rad_s')
@@ -99,13 +100,13 @@ def payload(action, args, state, token):
             rate = integer(speed, 180000 / math.pi)
             if not 1000 <= rate <= 360000:
                 raise ValueError('舵机指令速度必须为1～360度/秒')
-            span = 359000 if channel == 2 and args.get('_firmware') in ('GC-BASE-0.3.32','GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else 270000
+            span = 359000 if channel == 2 and firmware_since(args.get('_firmware'), 32) else 270000
             # .35/.36三路平滑，.37仅PE11；PE9/PE13回到匀速期限。
             smooth = (args.get('_firmware') in ('GC-BASE-0.3.35','GC-BASE-0.3.36') or
-                      args.get('_firmware') in ('GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') and channel == 2)
+                      firmware_since(args.get('_firmware'), 37) and channel == 2)
             ramp_s = rate/180000 + .25 if smooth else 0
             timeout = math.ceil(span/rate*1000 + ramp_s*1000 + 3000)
-            if timeout > (420000 if args.get('_firmware') in ('GC-BASE-0.3.32','GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else 300000):
+            if timeout > (420000 if firmware_since(args.get('_firmware'), 32) else 300000):
                 raise ValueError('本次舵机指令超过执行期限，请提高指令速度或分段')
             tail = struct.pack('<I', rate)
         return 53, prefix + struct.pack('<IiIBB', action_id,
@@ -134,7 +135,7 @@ def payload(action, args, state, token):
             speeds[i] = struct.unpack_from('<H' if i < 2 else '<I', wire, 20 if i < 2 else 22)[0]
             if i<2:accelerations[i]=acceleration(member.get('accel',1))
         return 63, prefix + struct.pack('<III5i5I', action_id, timeout, mask, *targets, *speeds) + (
-            bytes(accelerations) if args.get('_firmware') in ('GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else b'')
+            bytes(accelerations) if firmware_since(args.get('_firmware'), 42) else b'')
     if action == 'confirm':
         if args.get('confirmed') is not True or state.get('servo_state') not in (5, 9):
             raise ValueError('只能人工确认当前已完成命令；不能用计时或模型确认')
@@ -261,7 +262,7 @@ class MechanismLink(Link):
         return super().step(now)
 
     def extra_request(self, now):
-        if self.firmware in ('GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'):
+        if firmware_since(self.firmware, 41):
             # 提前刷新关键状态，不能等250ms即将超时才被命令/诊断挤到后面。
             polls=[(35,self.base_at,.08),(58,self.actual_at,.08),(64,self.group_at,.10)]
             if self.home.get('state') in (1,2,3):polls.append((68,self.home_at,.10))
@@ -272,18 +273,18 @@ class MechanismLink(Link):
             kind, data, request_id = self.commands.popleft()
             self.operation = request_id
             return kind, data
-        if self.firmware in ('GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') and now-self.handoff_at >= .15:
+        if firmware_since(self.firmware, 45) and now-self.handoff_at >= .15:
             return 72, b''  # 交接显示不挤占已排队动作；关键35/58/64仍优先。
-        if self.firmware in ('GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') and now-self.last_failure_poll >= 1:
+        if firmware_since(self.firmware, 39) and now-self.last_failure_poll >= 1:
             self.last_failure_poll = now
             return 70, b''
-        if self.firmware in ('GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') and now-self.last_park_poll >= 1:
+        if firmware_since(self.firmware, 35) and now-self.last_park_poll >= 1:
             self.last_park_poll = now
             return 69, b''  # 仅取冻结记录，不重启/清故障；关键状态仍按原节拍轮询。
-        if now - self.last_poll >= (.03 if self.firmware in ('GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else .04):
+        if now - self.last_poll >= (.03 if firmware_since(self.firmware, 34) else .04):
             self.last_poll = now
-            if self.firmware in ('GC-BASE-0.3.32','GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50'):
-                kinds=(35,58,64,68) if self.firmware in ('GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else (35,58,64)
+            if firmware_since(self.firmware, 32):
+                kinds=(35,58,64,68) if firmware_since(self.firmware, 34) else (35,58,64)
                 self.poll_kind = kinds[self.poll_index % len(kinds)]
                 self.poll_index += 1
             else:
@@ -372,7 +373,7 @@ class MechanismLink(Link):
             return True
         data = packet.payload[1:]
         if request.kind == 70:
-            if (self.firmware not in ('GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') or len(data)!=124 or
+            if (not firmware_since(self.firmware, 39) or len(data)!=124 or
                     struct.unpack_from('<I',data)[0]!=1 or
                     struct.unpack_from('<I',data,4)[0] not in (0,1) or
                     struct.unpack_from('<I',data,16)[0]>2 or struct.unpack_from('<I',data,24)[0]&~3):
@@ -385,7 +386,7 @@ class MechanismLink(Link):
                 self.failure['rpm']=list(struct.unpack_from('<2i',data,108))
                 self.failure['age_ms']=list(struct.unpack_from('<2I',data,116))
         elif request.kind == 69:
-            length,schema = (124,2) if self.firmware in ('GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else (120,1)
+            length,schema = (124,2) if firmware_since(self.firmware, 36) else (120,1)
             if (len(data) != length or struct.unpack_from('<I',data)[0] != schema or
                     struct.unpack_from('<I',data,4)[0] not in (0,1) or
                     struct.unpack_from('<I',data,12)[0] & ~63 or
@@ -465,7 +466,7 @@ class MechanismLink(Link):
     def prepare(self, request_id, args, now):
         """同会话正常停止恢复；只恢复准备能力，不取得控制权或输出。"""
         m = self.actual
-        if (self.firmware not in ('GC-BASE-0.3.26', 'GC-BASE-0.3.27', 'GC-BASE-0.3.28', 'GC-BASE-0.3.29', 'GC-BASE-0.3.30', 'GC-BASE-0.3.31', 'GC-BASE-0.3.32', 'GC-BASE-0.3.33', 'GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') or not self.commissioning or
+        if (not firmware_since(self.firmware, 26) or not self.commissioning or
                 self.latched or not self.bound or not self.action_locked or
                 not self.stop_acknowledged or now - self.actual_at >= .25 or
                 now - self.base_at >= .25 or not self.base.get('stopped') or
@@ -484,24 +485,24 @@ class MechanismLink(Link):
 
     def submit(self, request_id, action, args, now):
         args = dict(args)
-        tuned = self.firmware in ('GC-BASE-0.3.31','GC-BASE-0.3.32','GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') and self.manual_debug
+        tuned = firmware_since(self.firmware, 31) and self.manual_debug
         args['_manual_tuning'] = tuned  # 不信任调用方提供的模式标志。
         args['_firmware'] = self.firmware
         if self.home.get('state') in (1,2,3) and action!='home_confirm':
             raise ValueError('舵机回零尚未确认；请核对三路实际0度或停止')
         if action in ('home','home_confirm'):
-            if (self.firmware not in ('GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') or not self.manual_debug or
+            if (not firmware_since(self.firmware, 34) or not self.manual_debug or
                     now-self.home_at>=.25 or self.home.get('zero_version')!=self.actual.get('zero_version')):
                 raise ValueError('回零初始化要求0.3.34手动模式及有效零点、新鲜初始化状态')
             if action=='home_confirm' and (self.home.get('state')!=3 or args.get('home_id')!=self.home.get('id')):
                 raise ValueError('只能确认本次已输出完成的回零动作')
         if self.group.get('state') == 1:
             raise ValueError('联调组运行中，禁止插入单项操作')
-        if action == 'group' and (self.firmware not in ('GC-BASE-0.3.32','GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') or not tuned or
+        if action == 'group' and (not firmware_since(self.firmware, 32) or not tuned or
                 self.group.get('state') == 1 or now-self.group_at >= .25):
             raise ValueError('联调组需要0.3.32、手动模式及新鲜空闲组反馈')
         if action == 'move':
-            if self.firmware in ('GC-BASE-0.3.31','GC-BASE-0.3.32','GC-BASE-0.3.33','GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') and not self.manual_debug:
+            if firmware_since(self.firmware, 31) and not self.manual_debug:
                 raise ValueError('单项调试请先进入手动模式；自动姿态使用独立入口')
             if args.get('speed_rad_s') is not None and not tuned:
                 raise ValueError('可调舵机速度需要0.3.31和本次手动模式')
@@ -509,15 +510,15 @@ class MechanismLink(Link):
                 args.setdefault('speed_rad_s', math.pi/4)
             if tuned and args.get('axis') == 'gripper':
                 args['release_confirmed'] = True  # 明确执行夹爪目标即代表本次开合意图。
-        if action == 'mode' and (self.firmware not in ('GC-BASE-0.3.27', 'GC-BASE-0.3.28', 'GC-BASE-0.3.29', 'GC-BASE-0.3.30', 'GC-BASE-0.3.31', 'GC-BASE-0.3.32', 'GC-BASE-0.3.33', 'GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') or not self.commissioning or not self.actual.get('zero_valid')):
+        if action == 'mode' and (not firmware_since(self.firmware, 27) or not self.commissioning or not self.actual.get('zero_valid')):
             raise ValueError('手动调试模式要求新固件、显式机械许可及有效人工零点')
         if action == 'pose' and self.manual_debug:
             raise ValueError('手动调试模式不执行自动姿态；请先返回互锁模式')
         if self.action_locked:
             raise ValueError('动作已停止并锁定；只读反馈保留，需人工核对后重新准备')
         # 新板端目前只验收诊断附着，不能借版本兼容开放其它机械命令。
-        commissioned = self.commissioning and self.firmware in ('GC-BASE-0.3.24', 'GC-BASE-0.3.25', 'GC-BASE-0.3.26', 'GC-BASE-0.3.27', 'GC-BASE-0.3.28', 'GC-BASE-0.3.29', 'GC-BASE-0.3.30', 'GC-BASE-0.3.31', 'GC-BASE-0.3.32', 'GC-BASE-0.3.33', 'GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50')
-        readonly_attach = not commissioned and self.firmware in ('GC-BASE-0.3.23', 'GC-BASE-0.3.24', 'GC-BASE-0.3.25', 'GC-BASE-0.3.26', 'GC-BASE-0.3.27', 'GC-BASE-0.3.28', 'GC-BASE-0.3.29', 'GC-BASE-0.3.30', 'GC-BASE-0.3.31', 'GC-BASE-0.3.32', 'GC-BASE-0.3.33', 'GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') and action == 'attach'
+        commissioned = self.commissioning and firmware_since(self.firmware, 24)
+        readonly_attach = not commissioned and firmware_since(self.firmware, 23) and action == 'attach'
         if (self.latched or not self.bound or (not readonly_attach and not commissioned and self.firmware not in ('GC-BASE-0.3.14', 'GC-BASE-0.3.15', 'GC-BASE-0.3.17', 'GC-BASE-0.3.18', 'GC-BASE-0.3.19'))
                 or now - self.actual_at >= .25 or now - self.base_at >= .25):
             raise ValueError('实车固件/会话/反馈未就绪')
@@ -544,10 +545,10 @@ class MechanismLink(Link):
         state_age = None if ages['actual'] is None or ages['base'] is None else max(ages['actual'], ages['base'])
         fresh = self.bound and not self.latched and state_age is not None and state_age < 250
         return dict(available=True, domain='physical', connected=fresh, real_connected=fresh,
-                    axis_zero_policy=None if self.firmware in ('GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else
+                    axis_zero_policy=None if firmware_since(self.firmware, 39) else
                         dict(target_max_um=AXIS_ZERO_ZONE_UM,max_rpm=AXIS_ZERO_MAX_RPM),
-                    manual_policy=dict(endpoint_tolerance_um=1000 if self.firmware in ('GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else 500,tolerance_um=500,stable_ms=100,stable_samples=2,requested_speed=True)
-                        if self.firmware in ('GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50') else None,
+                    manual_policy=dict(endpoint_tolerance_um=1000 if firmware_since(self.firmware, 43) else 500,tolerance_um=500,stable_ms=100,stable_samples=2,requested_speed=True)
+                        if firmware_since(self.firmware, 39) else None,
                     firmware=self.firmware, boot_id=str(self.boot), session_id=str(self.session),
                     handoff=self.handoff if now-self.handoff_at<.25 else None,
                     execution=self.execution if now-self.base_at<.25 else None,

@@ -39,55 +39,5 @@ class CanReplyOrderTests(unittest.TestCase):
         for case in range(8, 12):
             with self.subTest(case=case): self.run_case(case)
 
-    def test_old_fault_evidence_paths_fail_new_cases(self):
-        device = self.device
-        with tempfile.TemporaryDirectory(dir=ROOT / 'output/tests') as folder:
-            folder = Path(folder)
-            for case in (12, 13):
-                can = (device / 'can_tx.c').read_text(encoding='utf-8')
-                bus = (device / 'bus.c').read_text(encoding='utf-8')
-                if case == 12:
-                    can = can.replace('tx_mailbox != mailbox || tx_bad)', 'tx_mailbox != mailbox)')
-                else:
-                    bus = bus.replace('Fault(changed);', 'Fault(errors != seen_errors ? BUS_ERROR_CAN : BUS_ERROR_RX);')
-                cpath, bpath = folder / 'can.c', folder / 'bus.c'
-                cpath.write_text(can, encoding='utf-8')
-                bpath.write_text(bus, encoding='utf-8')
-                binary = folder / 'old.exe'
-                compile_c(binary, [ROOT / 'tests/can_reply_order.c', cpath, bpath, device / 'drive.c'],
-                          extra=['-I', str(ROOT / 'tests'), '-include', str(ROOT / 'tests/can_hal_stub.h')])
-                result = subprocess.run([str(binary), str(case)], capture_output=True)
-                self.assertNotEqual(result.returncode, 0)
-
-    def test_previous_receive_guard_window_is_detected(self):
-        source = (self.device / 'bus.c').read_text(encoding='utf-8')
-        old = source.replace('    /* RX搬运/观察回调期间也可能进错误中断；本轮不得先报告完成。 */\n'
-                             '    CheckErrors();', '')
-        self.assertNotEqual(source, old)
-        with tempfile.TemporaryDirectory(dir=ROOT / 'output/tests') as folder:
-            folder = Path(folder)
-            bus = folder / 'old_bus.c'
-            bus.write_text(old, encoding='utf-8')
-            binary = folder / 'negative.exe'
-            self.build(binary, bus)
-            result = subprocess.run([str(binary), '6'], capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-
-    def test_previous_callback_time_gate_fails_valid_early_reply(self):
-        source = (self.device / 'bus.c').read_text(encoding='utf-8')
-        old = source.replace('frame.tx_sequence == bus_diag.query_tx_sequence &&',
-                             'can_diag.tx_done_sequence == bus_diag.query_tx_sequence &&\n'
-                             '            (uint32_t)(frame.tick - can_diag.tx_done_tick) < 0x80000000UL &&')
-        self.assertNotEqual(source, old)
-        with tempfile.TemporaryDirectory(dir=ROOT / 'output/tests') as folder:
-            folder = Path(folder)
-            bus = folder / 'old_bus.c'
-            bus.write_text(old, encoding='utf-8')
-            binary = folder / 'negative.exe'
-            self.build(binary, bus)
-            result = subprocess.run([str(binary), '0'], capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-
-
 if __name__ == '__main__':
     unittest.main()

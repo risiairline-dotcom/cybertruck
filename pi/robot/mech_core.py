@@ -13,6 +13,7 @@ import time
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from .device.capabilities import firmware_since
 from .device.mechanism import MechanismLink
 from .device.mech_sequence import Sequence, record as sequence_record
 from .device.recovery import Recovery
@@ -232,7 +233,7 @@ class DeviceCore:
             if value.op == 'observe':
                 # 诊断附着不取得运动租约；浏览器关闭后由唯一核心继续保活与只读轮询。
                 if (self.site_ready or self.token or value.token or value.args or
-                        self.link.firmware not in ('GC-BASE-0.3.23', 'GC-BASE-0.3.24', 'GC-BASE-0.3.25', 'GC-BASE-0.3.26', 'GC-BASE-0.3.27', 'GC-BASE-0.3.28', 'GC-BASE-0.3.29', 'GC-BASE-0.3.30', 'GC-BASE-0.3.31', 'GC-BASE-0.3.32', 'GC-BASE-0.3.33', 'GC-BASE-0.3.34','GC-BASE-0.3.35','GC-BASE-0.3.36','GC-BASE-0.3.37','GC-BASE-0.3.38','GC-BASE-0.3.39','GC-BASE-0.3.40','GC-BASE-0.3.41','GC-BASE-0.3.42','GC-BASE-0.3.43','GC-BASE-0.3.44','GC-BASE-0.3.45','GC-BASE-0.3.46','GC-BASE-0.3.47','GC-BASE-0.3.48','GC-BASE-0.3.49','GC-BASE-0.3.50')):
+                        not firmware_since(self.link.firmware, 23)):
                     raise ValueError('只读附着要求独立只读模式、无人持有控制权且无附加参数')
                 key = ('readonly:' + value.client, value.request_id)
                 encoded = value.model_dump_json()

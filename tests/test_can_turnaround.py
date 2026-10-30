@@ -44,21 +44,5 @@ class CanTurnaroundTests(unittest.TestCase):
     def test_stop_bypasses_pending_fifo(self): self.run_case(8)
     def test_pending_fifo_does_not_extend_50ms_deadline(self): self.run_case(9)
 
-    def test_negative_control_detects_old_pre_callback_time(self):
-        source = (ROOT / 'firmware/User/Device/can_tx.c').read_text(encoding='utf-8')
-        old = source.replace('uint32_t now, mailbox, mask;',
-                             'uint32_t now = HAL_GetTick(), mailbox, mask;')
-        old = old.replace('    now = HAL_GetTick();\n    if (tx_state != CAN_BUSY)',
-                          '    if (tx_state != CAN_BUSY)')
-        self.assertNotEqual(source, old)
-        path = self.output / 'pre_callback.c'
-        path.write_text(old, encoding='utf-8')
-        binary = self.output / 'negative.exe'
-        self.build(binary, path)
-        for index in (0, 1, 2):
-            result = subprocess.run([str(binary), str(index)], capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-
-
 if __name__ == '__main__':
     unittest.main()

@@ -95,7 +95,7 @@ class Simulation:
         self._begin(spec, ref.duration_s)
 
     def run(self, plan):
-        # 显式开始模拟建立独立运行原点，绝不冒充测得的地图配准。
+        # 开始模拟时建立独立运行原点，与地图配准无关。
         self.reset(plan.view['parameters']['start'], plan.view['parameters']['max_rpm'],
                    plan.view['parameters'].get('dynamics', {}).get('wheel_slew_rpm_s', 180.),
                    plan.view['parameters'].get('dynamics', {}).get('lag_ff_s', 0.))
