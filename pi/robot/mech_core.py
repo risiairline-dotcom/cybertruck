@@ -46,10 +46,19 @@ class DeviceCore:
         self.pose_path = Path(runtime) / 'physical_poses.json' if runtime else None
         self.poses = []
         self.sequence = Sequence()
+        self.observed_run = None  # 最近一次观察联调表的运行编号；之后任何单项动作或停止都使其失效。
         from .device.arrival import Arrival
         self.arrival = Arrival()
         from .vision.centering import Centering
         self.centering = Centering()
+        from .vision.arm_centering import ArmCentering
+        self.arm_centering = ArmCentering()
+        self.arm_calibration_path = Path(runtime)/'arm_centering_calibration.json' if runtime else None
+        if self.arm_calibration_path and self.arm_calibration_path.exists():
+            try:
+                self.arm_centering.set_calibration(json.loads(self.arm_calibration_path.read_text(encoding='utf-8')))
+            except (ValueError,OSError,TypeError,KeyError) as exc:
+                self.arm_centering.calibration_error='转臂对中标定不可用：'+str(exc)
         self.vision_feed = None
         self.centering_records_writable = True
         self.centering_path = Path(runtime)/'rough_centering_calibration.json' if runtime else None
@@ -101,11 +110,12 @@ class DeviceCore:
             if not error:
                 snapshot=None
                 if self.vision_feed:
-                    self.vision_feed.enable(self.arrival.active)
+                    self.vision_feed.enable(self.arrival.active or self.arm_centering.active)
                     snapshot,_,_=self.vision_feed.snapshot()
                 saved=self.centering.advance(self.arrival,self.link,snapshot,now)
                 if saved is not None and self.vision_feed and self.centering_records_writable:
                     self.vision_feed.save(saved)
+                error=self.arm_centering.advance(self.link,snapshot,now)
             if not error:
                 error = self.sequence.advance(self.link,now)
             if error:
@@ -129,6 +139,7 @@ class DeviceCore:
                         recovery=self.recovery.view(),
                         arrival=self.arrival.view(),
                         centering=self.centering.view(),
+                        arm_centering=self.arm_centering.view(),
                         centering_records_writable=self.centering_records_writable,
                         centering_io=self.vision_feed.snapshot()[1:] if self.vision_feed else None,
                         safety_events=list(self.safety_events),
@@ -164,7 +175,8 @@ class DeviceCore:
                 (value.client!=self.owner or not secrets.compare_digest(value.token,self.token))):
             raise ValueError('另一页面持有控制权，不能删除其联调版本')
         view=self.link.view(now)
-        if (not view.get('connected') or self.arrival.active or self.sequence.status=='RUNNING' or self.link.group.get('state')==1 or
+        if (not view.get('connected') or self.arrival.active or self.arm_centering.active or
+                self.sequence.status=='RUNNING' or self.link.group.get('state')==1 or
                 self.recovery.active or any(1<=self.link.actual.get(k,0)<=5 for k in ('axis_state','servo_state','pose_state'))):
             raise ValueError('等待连接有效且动作空闲后删除版本；不会停止正在执行的动作')
         record=next((r for r in self.visible_sequences() if r['id']==args.get('id') and r['revision']==args.get('revision')),None)
@@ -184,6 +196,25 @@ class DeviceCore:
         while len(self.cache)>100:self.cache.popitem(last=False)
         return result
 
+    def accept_arm_calibration(self, args):
+        """把刚完成的探测结果连同用户确认的窗口写成正式标定；先落盘再加载。"""
+        from .vision.legacy.alignment_vision.core import fingerprint
+        probe = self.arm_centering.probe
+        if probe is None or self.arm_centering.status != 'DONE':
+            raise ValueError('没有刚完成的转臂探测结果')
+        if args.get('confirmed') is not True or args.get('physical_window_checked') is not True:
+            raise ValueError('需确认窗口内伸缩和转臂已实物检查无碰撞')
+        value = dict(probe, window=args.get('window'), max_step=args.get('max_step'),
+                     deadband_px=args.get('deadband_px'), physical_window_checked=True)
+        value['sha256'] = fingerprint(value)
+        from .vision.arm_centering import load_calibration
+        load_calibration(value)
+        if self.arm_calibration_path:
+            from .workbench.storage import write_json
+            write_json(self.arm_calibration_path, value)
+        self.arm_centering.set_calibration(value)
+        return dict(status='ARM_CALIBRATION_SAVED', domain='physical', action_sent=False)
+
     def stop_control(self, reason, source, client):
         """由核心锁保护；不记录控制令牌，停止后仍由唯一串口读取反馈。"""
         self.capture_stop(reason,source)
@@ -191,6 +222,8 @@ class DeviceCore:
         self.sequence.cancel(reason)
         self.arrival.cancel(reason)
         self.centering.cancel(reason)
+        self.arm_centering.cancel(reason)
+        self.observed_run = None
         if self.vision_feed:self.vision_feed.enable(False)
         self.recovery.cancel(reason)
         self.owner = self.token = ''
@@ -320,6 +353,8 @@ class DeviceCore:
                 raise ValueError('微调占有执行权，请先返回机械控制；可随时停止')
             if self.sequence.status=='RUNNING':
                 raise ValueError('联调执行中，禁止插入单项、改模式或重复执行；可停止整组')
+            if self.arm_centering.active:
+                raise ValueError('转臂对中执行中；可随时停止')
             if not self.site_ready and action not in ('teach', 'program_save', 'attach', 'invalidate'):
                 raise ValueError('本次烧录后尚未确认实车条件；设备核心保持只读，不使能/PWM')
             if action == 'alignment_start':
@@ -358,6 +393,15 @@ class DeviceCore:
                 self.arrival.finish()
                 self.centering.cancel('用户结束微调；未声明自动对中完成')
                 result=dict(status='RETURNING_TO_MECHANISM',domain='physical',action_sent=False)
+            elif action == 'arm_centering_start':
+                if args.get('confirmed') is not True or self.arrival.active:
+                    raise ValueError('需明确确认，且底盘微调未占用执行权')
+                if self.sequence.status!='DONE' or self.observed_run!=self.sequence.run_id:
+                    raise ValueError('先执行观察联调表并等待完成，再开始转臂对中')
+                self.arm_centering.start(self.link,self.sequence.saved,args.get('mode','auto'),args,now)
+                result=dict(status='ARM_CENTERING_STARTED',domain='physical',action_sent=False)
+            elif action == 'arm_centering_accept':
+                result=self.accept_arm_calibration(args)
             elif action == 'program_save':
                 name=args.get('id','')
                 revision=1+max((r['revision'] for r in self.sequences if r['id']==name),default=0)
@@ -377,6 +421,7 @@ class DeviceCore:
                 if saved is None:
                     raise ValueError('联调表版本不存在，先保存')
                 self.sequence.start(saved,args.get('mode','ordered'),self.link,now)
+                self.observed_run=self.sequence.run_id
                 result=dict(status='PROGRAM_STARTED',domain='physical',action_sent=False)
             elif action == 'teach':
                 pose_id = args.get('pose_id', '')
@@ -406,6 +451,7 @@ class DeviceCore:
                         raise ValueError('实车示教版本校验失败')
                     args['targets'] = record['targets']
                 result = self.link.submit(value.request_id, action, args, now)
+                self.observed_run = None
             self.cache[key] = (encoded, result)
             while len(self.cache) > 100:
                 self.cache.popitem(last=False)

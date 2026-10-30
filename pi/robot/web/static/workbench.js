@@ -4,7 +4,7 @@ import {initLidar, renderLidar} from './workbench-lidar.js?v=6';
 import {modelView} from './workbench-execution.js?v=1';
 import {initScene, sceneValues, applyScene, overlayDraft} from './workbench-scene.js?v=3';
 import {motionDirection, matchesRelease, stopShortcut} from './workbench-input.js?v=2';
-import {initMechanism, renderMechanism, cancelMechHeld, stopMechHeld, stopMechanism} from './workbench-mechanism.js?v=48.2';
+import {initMechanism, renderMechanism, cancelMechHeld, stopMechHeld, stopMechanism} from './workbench-mechanism.js?v=48.3';
 
 const $ = id => document.getElementById(id);
 const text = (id, value) => { $(id).textContent = value; };

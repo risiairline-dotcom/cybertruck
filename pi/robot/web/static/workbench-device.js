@@ -6,6 +6,7 @@ import {stateName, samePose, rejectionText} from './workbench-mech-guide.js?v=3'
 import {actuators, freshDevice, blockedReasons, allowed, moveArgs, manualTuning, armMaximum, gripMaximum, gripHold, canRecover} from './workbench-remote-state.js?v=49.1';
 import {mechanismNotice} from './workbench-mech-status.js?v=14';
 import {initArrival} from './workbench-arrival.js?v=7';
+import {initArmCentering} from './workbench-arm-centering.js?v=1';
 
 /* 仅访问实车网关；页面初始化只读取，不自动取得控制权或恢复动作。 */
 export function initDevice(root) {
@@ -228,10 +229,18 @@ export function initDevice(root) {
             try{const result=await send('mechanism',{action,...args});message(result.status);}
             finally{sending=false;draw();}
         },message);
+    const armUi=initArmCentering(card,current,()=>!!token,()=>sending||pending||renewalUncertain,
+        async(action,args)=>{
+            if(sending)return;sending=true;
+            try{const result=await send('mechanism',{action,...args});message(result.status);}
+            catch(e){message(e.message);}
+            finally{sending=false;draw();}
+        });
     card.addEventListener('input',()=>{saveMotionDraft();draw();});el('poses').onchange=draw;
     function draw(){
         sequenceUi.draw();
         arrivalUi.draw();
+        armUi.draw();
         const value=current(),m=value.mechanism;
         setText(el('status'),!value.connected?(state.connected?'反馈过期 · 动作暂停':'状态未知 / 连接中断'):value.action_locked?'动作已锁定 · 反馈在线':renewalUncertain?'控制权核对中 · 动作暂停':value.base?.fault||m?.fault?'故障锁定':!value.site_ready?'实车只读':'实车在线');
         setText(el('firmware'),value.firmware||'—');
