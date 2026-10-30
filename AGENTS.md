@@ -4,7 +4,8 @@
 
 - 目标：2026-11-06 湖南省赛，先稳定跑完初赛（扫码、两批取放、第二层码垛、返航，≤180 秒），再提速和提精度；决赛后置。实施方案见 [cybertruck-change-proposals](https://github.com/risiairline-dotcom/cybertruck-change-proposals)。
 - 板端最后烧录 GC-BASE-0.3.50（HEX `f13f7230…7974`）。+Y 横移实物测试未通过，自动 2 号位对中未验收；板端 COMPLETE、CAN 错误 0、编码器小残差都不能当作实物通过。
-- 候选 GC-BASE-0.3.51（HEX `d357d96a…dc36`，Keil 0 错误 0 警告）未烧录：在 0.3.50 基础上只增加手动调试行程上限（升降 140mm、伸缩 107mm），自动姿态仍为 49/50mm 已核对包络。
+- 候选 GC-BASE-0.3.52（HEX `dd76cb5a…eddfb`，Keil 0 错误 0 警告）未烧录：含 0.3.51 的手动调试行程上限（升降 140mm、伸缩 107mm，自动姿态仍为 49/50mm），配置10微调改为驱动器相对位置小步并先修航向（[docs/micro_position_0352.md](docs/micro_position_0352.md)）。
+- 对位策略：用户选定底盘微调，L2 转臂对中（PR #4）暂停不合并。夹爪与车体中心 Y 向不重合，粗停航向偏差会变成夹爪横向误差，故先纯转向再单轴平移；仅离线验证。
 - 2026-10-30 之前的逐次烧录、只读验收与候选记录已迁至 [docs/history/agents_log_20261030.md](docs/history/agents_log_20261030.md)，只作历史查阅。
 
 ## 现场安全边界

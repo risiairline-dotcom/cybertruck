@@ -1,4 +1,4 @@
-import {firmwareSince} from './workbench-firmware.js?v=2';
+import {firmwareSince} from './workbench-firmware.js?v=3';
 import {setText} from './workbench-dom.js?v=1';
 
 /* 沿用机械页控制权及保活；自动对中使用Pi本地订阅，不采信浏览器像素报文。 */
@@ -16,6 +16,10 @@ export function initArrival(root, current, owned, busy, command, message) {
       <label>单步 / mm <input data-field="step" type="number" min="1" max="5" step="1" value="5"></label>
       <button data-axis="x" data-sign="1">车头＋X</button><button data-axis="x" data-sign="-1">车尾−X</button>
       <button data-axis="y" data-sign="1">左侧＋Y</button><button data-axis="y" data-sign="-1">右侧−Y</button>
+      <label>转向 / 度 <input data-field="turn" type="number" min="0.1" max="3" step="0.1" value="0.5"></label>
+      <button data-turn="1">逆时针转</button><button data-turn="-1">顺时针转</button>
+      <label>自动对中航向修正 / 度（逆时针为正，粗停偏差，0为不修正）
+        <input data-field="yaw-correction" type="number" min="-3" max="3" step="0.1" value="0"></label>
       <button data-field="finish">结束微调 / 返回机械控制</button>
       <button data-field="auto">开始自动对中</button><button data-field="pause">暂停自动对中</button>
       <p data-field="records"></p>
@@ -30,18 +34,27 @@ export function initArrival(root, current, owned, busy, command, message) {
         const s=current(),record=(s.sequences||[])[Number(el('version').value)];
         if(!record||!el('confirm').checked||!el('order').checkValidity())return;
         setText(el('key-prompt'),'正在核对并准备；看到“现在按PC0”和倒计时后再按。');
+        if(!el('yaw-correction').checkValidity())return;
         call('alignment_start',{id:record.id,revision:record.revision,sha256:record.sha256,
-            order:Number(el('order').value),mode,empty_path_confirmed:true,actual_pose_confirmed:true});
+            order:Number(el('order').value),mode,empty_path_confirmed:true,actual_pose_confirmed:true,
+            yaw_correction_deg:Number(el('yaw-correction').value)||0});
         el('confirm').checked=false;
     };
     el('start').onclick=()=>start('manual');
     el('auto-start').onclick=()=>start('auto');
-    el('auto').onclick=()=>call('alignment_auto',{confirmed:true});
+    el('auto').onclick=()=>{
+        if(el('yaw-correction').checkValidity())call('alignment_auto',{confirmed:true,
+            yaw_correction_deg:Number(el('yaw-correction').value)||0});
+    };
     el('pause').onclick=()=>call('alignment_pause',{});
     el('reload').onclick=()=>call('alignment_reload',{confirmed:true});
     for(const b of panel.querySelectorAll('[data-axis]'))b.onclick=()=>{
         if(el('step').value.trim()&&el('step').checkValidity())call('alignment_step',{
             axis:b.dataset.axis,mm:Number(el('step').value)*Number(b.dataset.sign)});
+    };
+    for(const b of panel.querySelectorAll('[data-turn]'))b.onclick=()=>{
+        if(el('turn').value.trim()&&el('turn').checkValidity())call('alignment_step',{
+            axis:'yaw',deg:Number(el('turn').value)*Number(b.dataset.turn)});
     };
     el('finish').onclick=()=>call('alignment_finish',{});
     el('preview').onclick=()=>{preview=!preview;history=[];observation=null;
@@ -118,6 +131,8 @@ export function initArrival(root, current, owned, busy, command, message) {
         el('pause').disabled=!ready||phase!=='READY'||c.mode!=='auto';
         el('reload').disabled=!ready||!['IDLE','DONE','FAILED'].includes(phase);
         for(const b of panel.querySelectorAll('[data-axis]'))b.disabled=!ready||phase!=='READY'||c.mode==='auto';
+        for(const b of panel.querySelectorAll('[data-turn]'))b.disabled=!ready||phase!=='READY'||c.mode==='auto'||
+            !firmwareSince(s.firmware, 52);
         el('finish').disabled=!ready||phase!=='READY';
         setText(el('calibration'),c.calibration_available?`已验收标定 ${c.calibration_id}；只适用于绑定的观察姿态及相机配置`:
             c.calibration_error||'本车方向/比例尚未实测；自动按钮保持关闭');

@@ -35,13 +35,21 @@ static void Residual(TrackConfig config,double dx,double dy,int legacy)
     for(unsigned ms=110;ms<=2100;ms+=10)
     {
         Fresh(&o,ms);o.pose.x_m=dx;o.pose.y_m=.005+dy;
-        int status=Track_Step(&t,&o,ms);assert(status>=0);
+        int status=Track_Step(&t,&o,ms);
+        /* 车体始终停在残差处：位置小步得不到编码器进展，只能超时停止，不能报完成。 */
+        if(status<0){assert(!legacy&&t.output.fault==TRACK_TIMEOUT);break;}
         if(!legacy)
         {
-            float wheels[4];KinBody b;
-            for(unsigned i=0;i<4;i++){wheels[i]=(float)t.output.rpm[i];assert(fabs(wheels[i])==fabs(wheels[0]));}
-            assert(Kin_Forward(config.geometry,wheels,&b));
-            if(b.vx_m_s*dx+b.vy_m_s*dy<0)corrective++;
+            /* 位置小步四轮同幅；按圈数方向判断是否朝减小残差的方向走。 */
+            if(t.output.micro_hold)
+            {
+                float wheels[4];KinBody b;
+                for(unsigned i=0;i<4;i++){wheels[i]=(float)t.output.micro_rev[i];assert(fabs(wheels[i])==fabs(wheels[0]));}
+                assert(t.output.micro_rpm>=1&&t.output.micro_rpm<=2);
+                assert(Kin_Forward(config.geometry,wheels,&b));
+                if(b.vx_m_s*dx+b.vy_m_s*dy<0)corrective++;
+            }
+            for(unsigned i=0;i<4;i++)assert(t.output.rpm[i]==0);
             if(Track_Token(&t)) (void)Track_Sent(&t,1,Track_Token(&t),ms);
         }
         if(status==1)break;

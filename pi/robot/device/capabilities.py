@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 # 已核对协议的最新固件 GC-BASE-0.3.LATEST_MINOR；新固件核对协议后只改这里。
-LATEST_MINOR = 51
+LATEST_MINOR = 52
 _PREFIX = 'GC-BASE-0.3.'
 
 

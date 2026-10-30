@@ -490,21 +490,21 @@ int Exec_Goal(Exec *exec, const TrackGoal *goal, uint32_t now_ms)
 {
     int result;
     RefSpec micro_reference;
-    int micro = goal && exec->config.version == 10 && goal->id &&
-        goal->timeout_ms == 10000 && goal->reference.kind == 1 &&
-        goal->reference.yaw_rad == 0 &&
-        ((goal->reference.x_m == 0) != (goal->reference.y_m == 0)) &&
-        hypot(goal->reference.x_m, goal->reference.y_m) >= .001 &&
-        hypot(goal->reference.x_m, goal->reference.y_m) <= .00501 &&
-        goal->reference.linear.velocity > 0 && goal->reference.linear.velocity <= .01f &&
-        goal->reference.linear.acceleration > 0 && goal->reference.linear.acceleration <= .05f &&
-        goal->reference.linear.jerk > 0 && goal->reference.linear.jerk <= .2f;
+    /* 单轴1～5mm平移，或0.1°～3°纯转向；其余参数必须与固定模板逐字节一致。 */
+    int micro = goal && exec->config.version == 10 && goal->id && goal->timeout_ms == 10000 &&
+        ((goal->reference.kind == 1 && goal->reference.yaw_rad == 0 &&
+          ((goal->reference.x_m == 0) != (goal->reference.y_m == 0)) &&
+          hypot(goal->reference.x_m, goal->reference.y_m) >= .001 &&
+          hypot(goal->reference.x_m, goal->reference.y_m) <= .00501) ||
+         (goal->reference.kind == 2 && goal->reference.x_m == 0 && goal->reference.y_m == 0 &&
+          fabs(goal->reference.yaw_rad) >= .0017 && fabs(goal->reference.yaw_rad) <= .05236));
     memset(&micro_reference, 0, sizeof(micro_reference));
     if (micro)
     {
-        micro_reference.kind = 1;
+        micro_reference.kind = goal->reference.kind;
         micro_reference.x_m = goal->reference.x_m;
         micro_reference.y_m = goal->reference.y_m;
+        micro_reference.yaw_rad = goal->reference.yaw_rad;
         micro_reference.linear.velocity = .01f;
         micro_reference.linear.acceleration = .05f;
         micro_reference.linear.jerk = .2f;
@@ -558,6 +558,7 @@ int Exec_Goal(Exec *exec, const TrackGoal *goal, uint32_t now_ms)
         exec->have_goal = 1;
         exec->mode = EXEC_ACTIVE;
         exec->control_ms = now_ms;
+        exec->position_token = 0;
     }
     return result;
 }
@@ -763,6 +764,26 @@ void Exec_Run(Exec *exec, uint32_t now_ms)
             return;
         }
         Track_Read(&exec->track, &output);
+        if (output.micro_hold)
+        {
+            /* 驱动器执行位置小步期间不发速度，零速也不能发，否则会打断小步。 */
+            double revolutions[4];
+            uint32_t token = Track_Token(&exec->track);
+            for (index = 0; index < 4; index++)
+            {
+                revolutions[index] = output.micro_rev[index] * exec->config.command_sign[index];
+            }
+            if (token != exec->position_token)
+            {
+                if (!exec->io.position || !exec->io.position(revolutions, output.micro_rpm, output.id, token))
+                {
+                    Exec_Stop(exec, 5, now_ms);
+                    return;
+                }
+                exec->position_token = token;
+            }
+            return;
+        }
         for (index = 0; index < 4; index++)
         {
             rpm[index] = (int16_t)(output.rpm[index] * exec->config.command_sign[index]);

@@ -41,7 +41,7 @@ typedef struct
     uint32_t imu_source_epoch;
     uint32_t calibration;
     double lag_ff_s; /* 实测动力滞后前馈，秒；0关闭，不改变停止/到位判定。 */
-    uint32_t micro_steps; /* 仅标定10：整数轮速小步，零速TXOK及新反馈稳定后再纠偏。 */
+    uint32_t micro_steps; /* 仅标定10：驱动器相对位置小步，零速TXOK及新反馈稳定后再纠偏。 */
 } TrackConfig;
 
 typedef struct
@@ -81,6 +81,11 @@ typedef struct
     uint32_t stable_elapsed_ms;
     uint32_t blockers;
     uint32_t done_ms;
+    /* micro_hold非零时本步改由驱动器执行相对当前实时位置的位移：
+     * micro_rev为理论轮正向圈数，micro_rpm为四轮同一转速；期间不发速度命令。 */
+    double micro_rev[4];
+    uint32_t micro_rpm;
+    uint32_t micro_hold;
 } TrackOutput;
 
 typedef struct
@@ -103,12 +108,16 @@ typedef struct
     uint32_t position_active;
     uint32_t yaw_active;
     uint32_t next_output;
-    uint32_t micro_phase; /* 0评估，1定向小步，2停车取样，3最终到位 */
+    uint32_t micro_phase; /* 0评估，1驱动器位置小步，2停车取样，3最终到位 */
     uint32_t micro_begin_ms;
-    uint32_t micro_duration_ms;
-    double micro_rpm[4];
+    uint32_t micro_duration_ms; /* 按小步圈数与转速估算的执行时间，超过3倍+500ms即超时 */
+    /* 本步起点位姿、轴（0/1平移，2转向）、方向及车体位移量（m或rad）；用于确认驱动器确已执行。 */
+    double micro_origin[3];
+    uint32_t micro_axis;
+    double micro_sign, micro_amount;
     uint32_t micro_token, micro_requested_ms, micro_acked, micro_heading_valid;
-    double micro_heading; /* 同一配置会话固定观察航向，不把每步残余偏航滚入下一目标。 */
+    /* 同一配置会话的目标航向；平移目标不改它，纯转向目标以当前航向加转角重设。 */
+    double micro_heading;
 } Track;
 
 /* 主循环唯一所有者；候选/冻结计划均静态持有，不把几何表放小栈。
@@ -122,7 +131,7 @@ ODOM_API int Track_Start(Track *track, const TrackGoal *goal,
                          const TrackObservation *observation, uint32_t now_ms);
 ODOM_API int Track_Step(Track *track, const TrackObservation *observation, uint32_t now_ms);
 /* 仅由唯一发送管理者在当前完整四轮批次TXOK后调用；接收/入队成功不等于Sent。
- * 普通路线仅接受零速票据；micro另接受非零小步票据以开始输出计时。
+ * 普通路线仅接受零速票据；micro另接受位置小步票据以开始执行计时。
  * 模型或唯一Bus适配回调；本模块不写CAN。过期/错动作/错序号/重复ACK不推进。 */
 /* 当前完整四轮输出的确认票据；普通路线只返回零速票据。 */
 ODOM_API uint32_t Track_Token(const Track *track);

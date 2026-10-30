@@ -143,6 +143,24 @@ class CenteringTests(unittest.TestCase):
         c.advance(a,l,(frame(.2,1),.2),.2)
         self.assertEqual(c.status,'PAUSED');self.assertFalse(l.commands)
 
+    def test_auto_turns_to_corrected_heading_before_looking_at_ring(self):
+        c,a,l=fixture();l.firmware='GC-BASE-0.3.52';c.begin(a,'auto',0,yaw_correction_deg=2)
+        c.advance(a,l,None,0)
+        self.assertEqual(c.status,'MOVING');self.assertEqual(len(l.commands),1)
+        spec=SPEC_DATA.unpack(l.commands[0][1][8:])
+        self.assertEqual(spec[:3],(2,0,0));self.assertAlmostEqual(spec[3],math.radians(2),places=6)
+        # 航向进入0.3°内才按圆环像素走平移小步。
+        a.phase='READY';a.waiting=None;l.commands.clear();l.execution['yaw_rad']=math.radians(1.9)
+        stable(c,a,l,start=1)
+        self.assertEqual(len(l.commands),1);self.assertEqual(SPEC_DATA.unpack(l.commands[0][1][8:])[0],1)
+        # 偏差超出3°修正能力即暂停，不连续转向追赶。
+        c,a,l=fixture();l.firmware='GC-BASE-0.3.52';c.begin(a,'auto',0,yaw_correction_deg=3)
+        c.advance(a,l,None,0);self.assertEqual(len(l.commands),1)
+        a.phase='READY';a.waiting=None;l.commands.clear();l.execution['yaw_rad']=math.radians(-.5)
+        c.advance(a,l,None,.1)
+        self.assertEqual(c.status,'PAUSED');self.assertFalse(l.commands)
+        with self.assertRaises(ValueError):c.begin(a,'auto',0,yaw_correction_deg=3.5)
+
     def test_unreviewed_bad_hash_and_wrong_goal_rejected(self):
         c,a,l=fixture()
         for key,value in (('ruler_checked',False),('goal','old_hand_placed_point'),('sha256','b'*64)):

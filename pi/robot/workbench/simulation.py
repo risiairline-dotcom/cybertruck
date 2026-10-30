@@ -53,7 +53,7 @@ class Simulation:
         self.model.tracker.cancel()
         self.model.pending.clear()
         self.model.manual_rpm = None
-        self.model.plant.targets[:] = [0.] * 4
+        self.model.plant.speed([0.] * 4)
         self.manual[:] = [0.] * 4
         self.mode = 'FAILED' if self.failure_reason else 'STOPPING'
         self.reason = self.failure_reason or reason
@@ -130,7 +130,7 @@ class Simulation:
                 self.fail('点动模型反馈失效')
         elif self.mode in ('STOPPING', 'FAILED'):
             self.model.pending.clear()
-            self.model.plant.targets[:] = [0.] * 4
+            self.model.plant.speed([0.] * 4)
             if self.mode == 'STOPPING' and max(map(abs, self.model.plant.rpm)) < .5:
                 self.mode = 'STOPPED'
         elif self.mode == 'RUNNING':

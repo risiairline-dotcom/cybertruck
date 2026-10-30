@@ -29,6 +29,9 @@ API uint32_t Device_StartMask(void)
 static uint32_t now, sequence, error, starts, stops, sends, enabled;
 static int16_t target[4];
 static uint32_t pending_id, pending_zero, pending_tick;
+/* 最近一次位置小步；新的速度命令取消它，与驱动器F6打断FD一致。 */
+static double position_rev[4];
+static uint32_t position_rpm, position_count, position_active;
 static int allow_ack = 1;
 static uint32_t drop;
 static uint32_t imu_epoch;
@@ -39,13 +42,21 @@ static int Enable(unsigned wheel) { (void)wheel; enabled++; return 1; }
 static int StartBus(void) { starts++; return 1; }
 static int Send(const int16_t rpm[4], uint32_t id, uint32_t zero)
 {
-    memcpy(target, rpm, sizeof(target)); sends++;
+    memcpy(target, rpm, sizeof(target)); sends++; position_active=0;
     if (zero && (!pending_zero || pending_zero != zero))
     { pending_id=id; pending_zero=zero; pending_tick=now+12; }
     if (!zero) { pending_zero=0; }
     return 1;
 }
-static void Stop(void) { memset(target,0,sizeof(target)); stops++; }
+static int Position(const double revolutions[4], uint32_t rpm, uint32_t id, uint32_t token)
+{
+    memcpy(position_rev, revolutions, sizeof(position_rev));
+    position_rpm=rpm; position_count++; position_active=1;
+    memset(target,0,sizeof(target));
+    pending_id=id; pending_zero=token; pending_tick=now+12;
+    return 1;
+}
+static void Stop(void) { memset(target,0,sizeof(target)); stops++; position_active=0; }
 static uint32_t Fault(void) { return error; }
 static int Stopped(uint32_t since) { return now-since>180; }
 static int Rearm(void) { return 1; }
@@ -66,9 +77,10 @@ static uint8_t Command(uint8_t type,const uint8_t *data,uint16_t size,
 
 API void Device_Init(void)
 {
-    ExecIo io={Ready,Enable,StartBus,Send,Stop,Fault,Stopped,Rearm};
+    ExecIo io={Ready,Enable,StartBus,Send,Stop,Fault,Stopped,Rearm,Position};
     CommHooks hooks={StopCommand,Command};
     now=sequence=error=starts=stops=sends=enabled=drop=0;
+    position_rpm=position_count=position_active=0;
     pending_id=pending_zero=pending_tick=0; allow_ack=1;
     imu_epoch=1;
     memset(target,0,sizeof(target));
@@ -165,6 +177,12 @@ API void Device_Push(const uint8_t *data,unsigned size)
 { unsigned index;for(index=0;index<size;index++) Comm_Feed(data[index],now,now); }
 API uint16_t Device_Read(uint8_t *wire) { return Comm_Read(wire); }
 API void Device_Target(int16_t *rpm) { memcpy(rpm,target,sizeof(target)); }
+/* 返回已下发位置小步次数；仍在执行时给出圈数（含指令极性）与转速，否则返回0。 */
+API uint32_t Device_Position(double *revolutions, uint32_t *rpm, uint32_t *count)
+{
+    memcpy(revolutions,position_rev,sizeof(position_rev)); *rpm=position_rpm; *count=position_count;
+    return position_active;
+}
 API uint32_t Device_Value(unsigned key)
 {
     switch(key) { case 0:return executor.mode;case 1:return starts;case 2:return stops;

@@ -79,7 +79,18 @@ class Plant:
         self.tau = [.08] * 4 if ideal else [.07, .09, .11, .08]
         self.history = deque(maxlen=80)
         self.positions = deque(maxlen=80)
+        # 驱动器相对位置模式：按自身编码器追目标圈数，载荷差异不改变位移；新速度命令即取消。
+        self.position_goal = None
+        self.position_rpm = 0
         self.record()
+
+    def move(self, revolutions, rpm):
+        self.position_goal = [turn + value for turn, value in zip(self.turns, revolutions)]
+        self.position_rpm = rpm
+
+    def speed(self, targets):
+        self.position_goal = None
+        self.targets[:] = targets
 
     def record(self):
         self.history.append((self.ms, tuple(self.rpm), tuple(self.turns), self.yaw, self.wz))
@@ -88,7 +99,12 @@ class Plant:
     def integrate(self, disturbance=False):
         dt = .002
         for index in range(4):
-            requested = 0 if self.stalled else self.targets[index] * self.gains[index]
+            if self.position_goal is not None:
+                remaining = self.position_goal[index] - self.turns[index]
+                requested = max(-self.position_rpm, min(self.position_rpm, remaining * 60 / .15))
+            else:
+                requested = self.targets[index] * self.gains[index]
+            requested = 0 if self.stalled else requested
             if disturbance and 1100 <= self.ms < 1250:
                 requested += 20
             self.rpm[index] += (requested - self.rpm[index]) * (1 - math.exp(-dt / self.tau[index]))
@@ -133,6 +149,7 @@ class ClosedLoop:
         self.auto_start = auto_start
         self.pending = []
         self.last_output = 0
+        self.position_token = 0
         self.acknowledged = set()
         self.trace = []
         self.reference_trace = []
@@ -176,7 +193,10 @@ class ClosedLoop:
             due = [item for item in self.pending if item[0] <= self.plant.ms]
             self.pending = [item for item in self.pending if item[0] > self.plant.ms]
             for _, targets, action, token in due:
-                self.plant.targets[:] = targets
+                if isinstance(targets, dict):
+                    self.plant.move(targets['micro_rev'], targets['micro_rpm'])
+                else:
+                    self.plant.speed(targets)
                 if token and self.ack:
                     if self.tracker.sent(action, token, (self.base_ms + self.plant.ms) & MASK):
                         self.acknowledged.add((action, token))
@@ -212,11 +232,18 @@ class ClosedLoop:
         if self.manual_rpm is not None:
             self.pending.clear()
             rate = self.config.slew_rpm_s * .01
-            self.plant.targets[:] = [old + min(rate, max(-rate, new - old))
-                                    for old, new in zip(self.plant.targets, self.manual_rpm)]
+            self.plant.speed([old + min(rate, max(-rate, new - old))
+                              for old, new in zip(self.plant.targets, self.manual_rpm)])
         elif output['state'] in (5, 6):
             self.pending.clear()
-            self.plant.targets[:] = [0] * 4
+            self.plant.speed([0] * 4)
+        elif output['micro_hold']:
+            # 同一位置票据只下发一次；执行期间不发速度命令。
+            token = self.tracker.token()
+            if token != self.position_token:
+                self.position_token = token
+                self.pending.append((tick + 6 + self.send_delay_ms, dict(micro_rev=output['micro_rev'],
+                                     micro_rpm=output['micro_rpm']), output['id'], token))
         elif output['output_id'] != self.last_output:
             self.last_output = output['output_id']
             self.pending.append((tick + 6 + self.send_delay_ms, list(output['rpm']), output['id'], self.tracker.token()))

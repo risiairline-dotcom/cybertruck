@@ -35,16 +35,41 @@ int main(int argc, char **argv)
     uint8_t data[96]={0},response[128],ticket[76]={0};uint16_t size=0;
     unsigned enabled=0,configured=0,prepared=0,armed=0,goal_sent=0,returned=0,returning=0,held_writes=0;
     int rpm[4]={0};double counts[4]={0};unsigned imu_sequence=1;
+    /* FD模式02：按3200脉冲/圈走完相对位移，F6速度命令中断位置小步。 */
+    double position_left[4]={0};unsigned fd_rpm[4]={0},fd_dir[4]={0},fd_pulses[4]={0},fd_moves[4]={0};int fd_signed[4]={0};
     Can_Refresh();Comm_Init(123,tick);Base_Init();SessionPacket(COMM_OPEN,1);
     for(tick=0;tick<18000;tick++)
     {
-        for(unsigned i=0;i<4;i++)counts[i]+=rpm[i]*65536./60000.;
+        for(unsigned i=0;i<4;i++)
+        {
+            if(position_left[i]!=0)
+            {
+                double step=fd_rpm[i]*65536./60000.;
+                if(step>fabs(position_left[i]))step=fabs(position_left[i]);
+                step=position_left[i]<0?-step:step;
+                counts[i]+=step;position_left[i]-=step;
+                rpm[i]=position_left[i]!=0?(int)fd_rpm[i]*(step<0?-1:1):0;
+            }
+            else counts[i]+=rpm[i]*65536./60000.;
+        }
         if(occupied)
         {
             unsigned address=last.id>>8,code=last.data[0];
             if(code==0xF3){CHECK(address<=4);enabled|=1U<<(address-1);}
-            if(code==0xF6){CHECK(address<=4);rpm[address-1]=((last.data[2]<<8)|last.data[3])*(last.data[1]?-1:1);}
-            if(code==0xFE&&address<=4)rpm[address-1]=0;
+            if(code==0xF6){CHECK(address<=4);rpm[address-1]=((last.data[2]<<8)|last.data[3])*(last.data[1]?-1:1);position_left[address-1]=0;}
+            if(code==0xFD&&!(last.id&255U))
+            {
+                CHECK(address>=1&&address<=4&&last.data[4]==0);unsigned w=address-1;
+                fd_dir[w]=last.data[1];fd_rpm[w]=(last.data[2]<<8)|last.data[3];
+                fd_pulses[w]=((unsigned)last.data[5]<<24)|((unsigned)last.data[6]<<16)|((unsigned)last.data[7]<<8);
+            }
+            else if(code==0xFD)
+            {
+                unsigned w=address-1;CHECK(last.data[2]==2&&last.data[3]==0);fd_pulses[w]|=last.data[1];
+                fd_signed[w]=(int)fd_pulses[w]*(fd_dir[w]?-1:1);fd_moves[w]++;
+                position_left[w]=fd_signed[w]*65536./3200.;rpm[w]=0;
+            }
+            if(code==0xFE&&address<=4){rpm[address-1]=0;position_left[address-1]=0;}
             Done();
             if(code==0x42)ConfigReply(address);
             else if(code==0x35||code==0x36||code==0x3A||code==0x33)
@@ -111,25 +136,17 @@ int main(int argc, char **argv)
     CHECK(configured&&prepared&&armed&&goal_sent&&returned);
     CHECK(micro_trace.frozen && micro_trace.action==1 && micro_trace.count>3 && micro_trace.count<224);
     CHECK(!micro_trace.exec_fault && !micro_trace.track_fault);
-    unsigned saw_move=0, saw_batch=0;
-    for(unsigned n=0;n<micro_trace.count;n++)
+    /* 位置小步四轮同幅；乘回command_sign后符合麦轮x/y模式；期间不发非零速度。 */
+    CHECK(fd_moves[0]>=1);
+    for(unsigned i=1;i<4;i++)CHECK(fd_moves[i]==fd_moves[0]&&abs(fd_signed[i])==abs(fd_signed[0])&&fd_rpm[i]==2);
     {
-        const MicroTraceSample *p=&micro_trace.samples[n];
-        if(p->command[0])
-        {
-            saw_move++;
-            for(unsigned i=1;i<4;i++)CHECK(abs(p->command[i])==abs(p->command[0]));
-            if(lateral)CHECK(p->command[0]==-p->command[1] && p->command[1]==p->command[2] && p->command[2]==-p->command[3]);
-            else CHECK(p->command[0]==p->command[1] && p->command[1]==p->command[2] && p->command[2]==p->command[3]);
-        }
-        if(p->sent[0])
-        {
-            saw_batch++;
-            CHECK(p->tx_tick[3]>=p->tx_tick[0] && p->tx_tick[3]-p->tx_tick[0]<=10);
-            if(lateral)CHECK(p->sent[0]==p->sent[1] && p->sent[1]==-p->sent[2] && p->sent[2]==p->sent[3]);
-        }
+        int body[4];for(unsigned i=0;i<4;i++)body[i]=fd_signed[i]*((i==1||i==3)?-1:1);
+        if(lateral)CHECK(body[0]==-body[1]&&body[1]==body[2]&&body[2]==-body[3]);
+        else CHECK(body[0]==body[1]&&body[1]==body[2]&&body[2]==body[3]);
+        CHECK((body[lateral?1:0]>0)==(delta>0));
     }
-    CHECK(saw_move && saw_batch);
+    for(unsigned n=0;n<micro_trace.count;n++)
+        for(unsigned i=0;i<4;i++)CHECK(!micro_trace.samples[n].command[i]&&!micro_trace.samples[n].sent[i]);
 
     CHECK(!MechPort_Holding()&&MechPort_Owned()&&executor.stop_confirmed);
     CHECK(start_key.phase==START_IDLE&&!start_key.ticket);

@@ -331,20 +331,25 @@ class DeviceCore:
                 project_root=package_root.parent if package_root.name=='pi' else package_root
                 profile=json.loads((project_root/'config/base_trials.json').read_text(encoding='utf-8'))
                 self.arrival.start(self.link,record,args.get('order'),dict(args,profile=profile),now)
-                try:self.centering.begin(self.arrival,args.get('mode','manual'),now)
+                try:self.centering.begin(self.arrival,args.get('mode','manual'),now,
+                                         args.get('yaw_correction_deg',0.))
                 except ValueError:
                     self.arrival.cancel('自动对中准备校验未通过，未下发交接')
                     raise
                 result=dict(status='ALIGNMENT_PREPARING',domain='physical',action_sent=False)
             elif action == 'alignment_step':
                 if self.centering.mode=='auto':raise ValueError('请先暂停自动对中，再插入手动方向目标')
-                self.arrival.move(self.link,args.get('axis'),args.get('mm'),now)
-                self.centering.note_move(self.link,args.get('axis'),args.get('mm'),now)
+                axis=args.get('axis')
+                self.arrival.move(self.link,axis,args.get('deg') if axis=='yaw' else args.get('mm'),now)
+                if axis!='yaw':  # 方向/比例标定记录只收平移小步
+                    self.centering.note_move(self.link,axis,args.get('mm'),now)
+                else:
+                    self.centering.pending_measure=None
                 result=dict(status='MICRO_QUEUED',domain='physical',action_sent=False)
             elif action == 'alignment_auto':
                 if self.arrival.phase!='READY' or args.get('confirmed') is not True:
                     raise ValueError('须停车等待且明确选择自动对中')
-                self.centering.begin(self.arrival,'auto',now)
+                self.centering.begin(self.arrival,'auto',now,args.get('yaw_correction_deg',0.))
                 result=dict(status='AUTO_CENTERING_STARTED',domain='physical',action_sent=False)
             elif action == 'alignment_pause':
                 if self.arrival.phase!='READY':raise ValueError('请等待当前小位移完成，紧急停止仍用红色按钮')

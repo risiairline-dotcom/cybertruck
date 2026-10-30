@@ -1,11 +1,11 @@
-import {firmwareSince} from './workbench-firmware.js?v=2';
+import {firmwareSince} from './workbench-firmware.js?v=3';
 import {setText, setSteps} from './workbench-dom.js?v=1';
 import {axisRateText} from './workbench-axis-profile.js?v=1';
-import {initSequence} from './workbench-sequence.js?v=49.1';
+import {initSequence} from './workbench-sequence.js?v=49.2';
 import {stateName, samePose, rejectionText} from './workbench-mech-guide.js?v=3';
-import {actuators, freshDevice, blockedReasons, allowed, moveArgs, manualTuning, armMaximum, gripMaximum, gripHold, canRecover} from './workbench-remote-state.js?v=49.1';
-import {mechanismNotice} from './workbench-mech-status.js?v=14';
-import {initArrival} from './workbench-arrival.js?v=7';
+import {actuators, freshDevice, blockedReasons, allowed, moveArgs, manualTuning, armMaximum, gripMaximum, gripHold, canRecover} from './workbench-remote-state.js?v=49.2';
+import {mechanismNotice} from './workbench-mech-status.js?v=15';
+import {initArrival} from './workbench-arrival.js?v=8';
 
 /* 仅访问实车网关；页面初始化只读取，不自动取得控制权或恢复动作。 */
 export function initDevice(root) {

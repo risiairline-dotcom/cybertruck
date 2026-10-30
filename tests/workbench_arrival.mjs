@@ -7,11 +7,14 @@ class Field {
     checkValidity(){return Number(this.value)>=1&&Number(this.value)<=5;}
 }
 const fields=new Map(['version','order','confirm','status','start','step','finish','preview','reference','vision','image',
-    'auto-start','auto','pause','reload','calibration','records','key-prompt'].map(k=>[k,new Field()]));
+    'auto-start','auto','pause','reload','calibration','records','key-prompt','turn','yaw-correction'].map(k=>[k,new Field()]));
 fields.get('order').value='1';fields.get('step').value='5';
+fields.get('turn').value='0.5';fields.get('yaw-correction').value='0';
+for(const k of ['turn','yaw-correction'])fields.get(k).checkValidity=()=>true;
 const buttons=['x','y'].flatMap(axis=>[1,-1].map(sign=>({dataset:{axis,sign:String(sign)},disabled:false})));
+const turns=[1,-1].map(turn=>({dataset:{turn:String(turn)},disabled:false}));
 const panel={innerHTML:'',className:'',querySelector:s=>fields.get(s.match(/"(.*?)"/)[1]),
-    querySelectorAll:()=>buttons,addEventListener(){},getClientRects:()=>[]};
+    querySelectorAll:s=>s.includes('turn')?turns:buttons,addEventListener(){},getClientRects:()=>[]};
 globalThis.document={createElement:()=>panel,hidden:false};
 globalThis.Option=class {constructor(text,value){this.text=text;this.value=String(value);}};
 globalThis.setInterval=()=>0;
@@ -28,8 +31,9 @@ state.arrival.phase='IDLE';state.firmware='GC-BASE-0.3.48';ui.draw();assert.equa
 state.firmware='GC-BASE-0.3.49';ui.draw();assert.equal(fields.get('start').disabled,false);
 state.firmware='GC-BASE-0.3.50';ui.draw();assert.equal(fields.get('start').disabled,false);
 state.firmware='GC-BASE-0.3.51';ui.draw();assert.equal(fields.get('start').disabled,false);
+state.firmware='GC-BASE-0.3.52';ui.draw();assert.equal(fields.get('start').disabled,false);
 state.arrival.phase='MOVING';ui.draw();assert.match(fields.get('status').textContent,/停车取样/);assert.ok(buttons.every(b=>b.disabled));
-state.arrival.phase='IDLE';state.firmware='GC-BASE-0.3.52';ui.draw();assert.equal(fields.get('start').disabled,true);
+state.arrival.phase='IDLE';state.firmware='GC-BASE-0.3.53';ui.draw();assert.equal(fields.get('start').disabled,true);
 state.firmware='GC-BASE-0.3.45';ui.draw();
 assert.ok(fields.get('auto-start').disabled);
 fields.get('confirm').checked=true;fields.get('start').onclick();await Promise.resolve();
@@ -42,7 +46,10 @@ assert.match(fields.get('key-prompt').textContent,/不会自行移动/);
 state.physical_start.age_ms=251;ui.draw();assert.match(fields.get('key-prompt').textContent,/先等待/);
 state.arrival.phase='READY';ui.draw();assert.ok(buttons.every(b=>!b.disabled));
 buttons[0].onclick();await Promise.resolve();assert.deepEqual(calls[1],{action:'alignment_step',args:{axis:'x',mm:5}});
-state.centering={mode:'auto',calibration_available:true};ui.draw();assert.ok(buttons.every(b=>b.disabled));
+assert.ok(turns.every(b=>b.disabled),'0.3.52之前不开放纯转向');
+state.firmware='GC-BASE-0.3.52';ui.draw();assert.ok(turns.every(b=>!b.disabled));
+turns[1].onclick();await Promise.resolve();assert.deepEqual(calls[2],{action:'alignment_step',args:{axis:'yaw',deg:-0.5}});
+state.centering={mode:'auto',calibration_available:true};ui.draw();assert.ok(buttons.every(b=>b.disabled));assert.ok(turns.every(b=>b.disabled));
 assert.equal(fields.get('pause').disabled,false);assert.ok(fields.get('auto').disabled);
 fields.get('pause').onclick();await Promise.resolve();assert.equal(calls.at(-1).action,'alignment_pause');
 state.arrival.phase='DONE';state.centering.mode='manual';ui.draw();assert.equal(fields.get('auto-start').disabled,false);

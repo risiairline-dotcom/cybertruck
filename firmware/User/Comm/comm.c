@@ -134,7 +134,7 @@ static void Dispatch(const Frame *frame, uint32_t now_ms)
         Frame_Put(data + 4, executor.command ? 5U : 1U, 4);
         if (executor.command)
         {
-            memcpy(data + 8, "GC-BASE-0.3.51", sizeof("GC-BASE-0.3.51"));
+            memcpy(data + 8, "GC-BASE-0.3.52", sizeof("GC-BASE-0.3.52"));
         }
         else
         {

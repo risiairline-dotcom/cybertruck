@@ -1,3 +1,4 @@
+import math
 import unittest
 import struct
 import test_execution as native
@@ -10,8 +11,9 @@ class MicroExecutionTests(unittest.TestCase):
         native.ExecutionTests.setUpClass()
         cls.lib=native.ExecutionTests.lib
 
-    def test_four_small_directions_use_real_controller_and_zero_ack(self):
-        for axis,mm in ((a,m) for a in ('x','y') for m in (-5,-1,1,5)):
+    def test_four_small_directions_and_turns_use_real_controller_and_zero_ack(self):
+        cases=[(a,m) for a in ('x','y') for m in (-5,-1,1,5)]+[('yaw',d) for d in (-3,-.5,.5,3)]
+        for axis,mm in cases:
             with self.subTest(axis=axis,mm=mm):
                 d=native.SimTransport(self.lib);d.open()
                 profile=native.profile();profile.update(version=10,max_rpm=6)
@@ -27,8 +29,13 @@ class MicroExecutionTests(unittest.TestCase):
                     if state[3]==4:
                         complete=True;break
                 self.assertTrue(complete)
-                value=d.plant.x if axis=='x' else d.plant.y
-                self.assertAlmostEqual(value,mm/1000,delta=.001)
+                if axis=='yaw':
+                    self.assertAlmostEqual(d.plant.yaw,math.radians(mm),delta=math.radians(.2))
+                    self.assertLess(math.hypot(d.plant.x,d.plant.y),.001)
+                else:
+                    value=d.plant.x if axis=='x' else d.plant.y
+                    self.assertAlmostEqual(value,mm/1000,delta=.001)
+                self.assertGreaterEqual(d.position_count,1)
 
     def test_old_version_does_not_gain_one_millimeter_goal(self):
         d=native.Device(self.lib);d.arm()

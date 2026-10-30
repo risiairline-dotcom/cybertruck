@@ -154,7 +154,8 @@ static uint8_t Command(uint8_t type, const uint8_t *data, uint16_t size,
 
 void Preview_Init(uint64_t boot)
 {
-    ExecIo io = {Ready, Enable, Begin, Send, Stop, Fault, Stopped, Rearm};
+    /* 路线预演不含配置10微调，没有位置小步出口；误入时Exec按发送失败停止。 */
+    ExecIo io = {Ready, Enable, Begin, Send, Stop, Fault, Stopped, Rearm, 0};
     CommHooks hooks = {StopCommand, Command};
     Exec_Init(&executor, io);
     executor.stop_confirmed = 1;
