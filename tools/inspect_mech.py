@@ -5,8 +5,6 @@ import json
 from pathlib import Path
 import time
 from elftools.elf.elffile import ELFFile
-from pyocd.core.helpers import ConnectHelper
-from pyocd.core.target import Target
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -38,6 +36,9 @@ def layout_type(die):
 
 
 def main():
+    # pyocd 只在连接探针时需要；layout_type 供主机测试单独使用。
+    from pyocd.core.helpers import ConnectHelper
+    from pyocd.core.target import Target
     parser=argparse.ArgumentParser()
     parser.add_argument('--manifest',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
