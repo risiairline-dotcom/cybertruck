@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "purpose": "development_ablation_only",
+  "annotation_origin": "assistant_visual_review_of_existing_operator_color_labels",
+  "a_confirmation_pending": true,
+  "independent_validation": false,
+  "samples": [
+    {"name":"黑色_稍转角_19","file":"data/output/vision/workbench/samples/284030349c84418689147503e1479844.jpg","sha256":"4c9eecd8aabfaced5901df1fbcaddbcf506e2541971df2a8dd35bb37f5c1cb12","color_id":5,"sample_roi":[700,210,765,255]},
+    {"name":"红色_反光_12","file":"data/output/vision/workbench/samples/966778ffbe3545ab86f173235e276b96.jpg","sha256":"612c33bf8e1129ee77b2024c2eac4d5c07573180506a28c643b1572a060871ee","color_id":1,"sample_roi":[545,350,585,390]},
+    {"name":"黄色_反光_10","file":"data/output/vision/workbench/samples/9f74114d3b624aeea6875d4471a65ae2.jpg","sha256":"ea5f970e5c824950a78d2bb19665f91337d4ba5a5a5687c0bd495df93b3f4b51","color_id":2,"sample_roi":[550,355,595,400]},
+    {"name":"蓝色_反光_08","file":"data/output/vision/workbench/samples/c86170da837e4a0cab31d09fa894a47b.jpg","sha256":"163523c34aead693ad6c860897a1af4dab8b6ba8b8601884219f2ffe54375e46","color_id":3,"sample_roi":[550,350,600,395]},
+    {"name":"绿色_反光_07","file":"data/output/vision/workbench/samples/eab6dbb56e9a467786f96ea795025b94.jpg","sha256":"350d1db3e1c042122101a1fb11d16b7978aa3a8c6299069e4f989885fd18141a","color_id":4,"sample_roi":[550,370,590,415]}
+  ]
+}

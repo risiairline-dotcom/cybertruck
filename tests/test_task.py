@@ -276,6 +276,17 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.demo.task.state['status'], 'RECONCILE_REQUIRED')
         self.assertEqual(self.demo.task.state['counts']['grabs'], 0)
 
+    def test_unknown_result_is_kept_distinct_from_failure(self):
+        state = self.first_transfer()
+        action_id = state['pending']['id']
+        self.demo.task.action('UNKNOWN', action_id, reason='回复丢失')
+        state = self.demo.task.state
+        self.assertEqual(state['status'], 'RECONCILE_REQUIRED')
+        self.assertEqual(state['counts']['grabs'], 0)
+        self.assertEqual(state['pending']['status'], 'UNKNOWN')
+        with self.assertRaises(TaskError):
+            self.demo.task.action('FAILED', action_id, reason='重复结束')
+
     def test_old_success_replayed_after_recovery_does_not_count_again(self):
         state = self.advance_until(lambda value: value['counts']['grabs'] == 1 and value['pending'] is None)
         event = self.demo.ledger.events(state['run_id'])[-1]

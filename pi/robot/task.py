@@ -235,9 +235,9 @@ def reduce(state, kind, payload, at_s):
         else:
             require(0 <= at_s - action['result']['observed_s'] <= .25, '执行结果已过期')
         apply_success(state, action)
-    elif kind == 'FAILED':
+    elif kind in ('FAILED', 'UNKNOWN'):
         require(action['status'] not in ('CONFIRMED', 'UNKNOWN'), '动作已结束')
-        action['status'] = 'FAILED'
+        action['status'] = 'UNKNOWN' if kind == 'UNKNOWN' else 'FAILED'
         state['status'] = 'RECONCILE_REQUIRED'
         state['reason'] = payload['reason']
         uncertain(state, action)
