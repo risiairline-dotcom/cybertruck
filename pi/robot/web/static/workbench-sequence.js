@@ -1,6 +1,6 @@
-import {firmwareSince} from './workbench-firmware.js?v=2';
+import {firmwareSince} from './workbench-firmware.js?v=3';
 import {setText, setSteps} from './workbench-dom.js?v=1';
-import {actuators,moveArgs,allowed,gripMaximum} from './workbench-remote-state.js?v=49.1';
+import {actuators,moveArgs,allowed,gripMaximum} from './workbench-remote-state.js?v=49.2';
 
 /* 参数表只编排正式远程请求；不计时模拟到位，不保存设备令牌。 */
 export function sequenceRows(rows,mode='ordered',options={}) {

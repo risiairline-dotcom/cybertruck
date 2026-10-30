@@ -51,6 +51,20 @@ class ArrivalTests(unittest.TestCase):
         for v in (0,.5,5.01,float('nan'),float('inf')):
             with self.assertRaises(ValueError):micro_goal(1,'x',v)
 
+    def test_turn_goal_and_firmware_gate(self):
+        for degrees in (-3,-.1,.1,3):
+            spec=SPEC_DATA.unpack(micro_goal(1,'yaw',degrees)[8:])
+            self.assertEqual(spec[:3],(2,0,0))
+            self.assertAlmostEqual(spec[3],math.radians(degrees),places=6)
+        for v in (0,.05,3.01,float('nan')):
+            with self.assertRaises(ValueError):micro_goal(1,'yaw',v)
+        a=Arrival();l=link();a.phase='READY';a.identity=(123,456,1)
+        l.firmware='GC-BASE-0.3.51'
+        with self.assertRaises(ValueError):a.move(l,'yaw',1,0)
+        self.assertFalse(l.commands)
+        l.firmware='GC-BASE-0.3.52';a.move(l,'yaw',1,0)
+        self.assertEqual(l.commands[0][0],34);self.assertEqual(a.phase,'GOAL')
+
     def test_old_board_and_stale_feedback_refused(self):
         a=Arrival();l=link();args=dict(empty_path_confirmed=True,actual_pose_confirmed=True,profile={})
         l.firmware='GC-BASE-0.3.44'
@@ -92,24 +106,30 @@ class ArrivalTests(unittest.TestCase):
         a=Arrival();l=link()
         profile=json.loads((Path(__file__).resolve().parents[1]/'config/base_trials.json').read_text(encoding='utf-8'))
         a.start(l,observation_record(),1,dict(empty_path_confirmed=True,actual_pose_confirmed=True,profile=profile),0)
-        a.started=-.5;l.execution['pose_valid']=True
+        l.execution['pose_valid']=True;now=0
         for kind in (71,71,32,59):
-            a.advance(l,0);wire=l.commands.popleft();self.assertEqual(wire[0],kind)
             if kind==59:
-                l.start_event=dict(ticket=struct.unpack_from('<I',a.body)[0],version=10,phase=4,fired=True,at=0)
+                # 配置10生效后先等0.4秒（板端补读四轮细分），期间不请求PC0准备。
+                a.advance(l,now);self.assertEqual(a.phase,'KEY_PREPARE');self.assertFalse(l.commands)
+                now=.39;l.actual_at=l.base_at=l.group_at=now
+                a.advance(l,now);self.assertFalse(l.commands)
+                now=.8;l.actual_at=l.base_at=l.group_at=now
+            a.advance(l,now);wire=l.commands.popleft();self.assertEqual(wire[0],kind)
+            if kind==59:
+                l.start_event=dict(ticket=struct.unpack_from('<I',a.body)[0],version=10,phase=4,fired=True,at=now)
             else:l.results.append(dict(request_id=wire[2],result=0,status='ACCEPTED'))
-        a.advance(l,0)
-        a.advance(l,0);wire=l.commands.popleft();self.assertEqual(wire[0],33)
+        a.advance(l,now)
+        a.advance(l,now);wire=l.commands.popleft();self.assertEqual(wire[0],33)
         l.results.append(dict(request_id=wire[2],result=0,status='ACCEPTED'));l.base['mode']=3
-        a.advance(l,0);self.assertEqual(a.phase,'READY')
-        a.move(l,'x',5,0);wire=l.commands.popleft();self.assertEqual(wire[0],34)
+        a.advance(l,now);self.assertEqual(a.phase,'READY')
+        a.move(l,'x',5,now);wire=l.commands.popleft();self.assertEqual(wire[0],34)
         l.results.append(dict(request_id=wire[2],result=0,status='ACCEPTED'))
-        a.advance(l,0);self.assertEqual(a.phase,'MOVING')
+        a.advance(l,now);self.assertEqual(a.phase,'MOVING')
         l.execution.update(action_id=a.action_id,action_state=4)
-        a.advance(l,0);self.assertEqual(a.phase,'READY')
-        a.finish();a.advance(l,0);wire=l.commands.popleft();self.assertEqual(struct.unpack_from('<I',wire[1])[0],4)
+        a.advance(l,now);self.assertEqual(a.phase,'READY')
+        a.finish();a.advance(l,now);wire=l.commands.popleft();self.assertEqual(struct.unpack_from('<I',wire[1])[0],4)
         l.results.append(dict(request_id=wire[2],result=0,status='ACCEPTED'))
-        a.advance(l,0);self.assertEqual(a.phase,'DONE')
+        a.advance(l,now);self.assertEqual(a.phase,'DONE')
 
     def test_board_timeout_reports_actual_reason_not_generic_fault(self):
         a=Arrival();l=link();a.phase='WAIT_PC0';a.identity=(123,456,1)

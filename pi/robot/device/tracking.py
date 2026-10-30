@@ -51,7 +51,8 @@ class Output(c.Structure):
     _fields_ = [('rpm', c.c_double * 4), ('reference', Reference), ('position_error_m', c.c_double),
                 ('yaw_error_rad', c.c_double), ('scale', c.c_double)] + [(key, c.c_uint32) for key in (
                     'state', 'fault', 'id', 'output_id', 'zero_id', 'zero_ack_ms', 'stable_elapsed_ms',
-                    'blockers', 'done_ms')]
+                    'blockers', 'done_ms')] + [('micro_rev', c.c_double * 4), ('micro_rpm', c.c_uint32),
+                                               ('micro_hold', c.c_uint32)]
 
 
 def stamp(sample):
@@ -137,7 +138,9 @@ class Tracker:
     def output(self):
         output = Output()
         self.lib.Track_Read(self.storage, c.byref(output))
-        result = {key: getattr(output, key) for key, _ in Output._fields_ if key not in ('rpm', 'reference')}
+        result = {key: getattr(output, key) for key, _ in Output._fields_
+                  if key not in ('rpm', 'reference', 'micro_rev')}
         result['rpm'] = list(output.rpm)
+        result['micro_rev'] = list(output.micro_rev)
         result['reference'] = {key: getattr(output.reference, key) for key, _ in Reference._fields_}
         return result

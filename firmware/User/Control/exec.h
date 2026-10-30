@@ -46,6 +46,8 @@ typedef struct
     uint32_t (*fault)(void);
     int (*stopped)(uint32_t since_ms);
     int (*rearm)(void);
+    /* 四轮相对当前实时位置的小步，圈数已含指令极性；同一票据只调用一次，TXOK后回调Exec_Sent。 */
+    int (*position)(const double revolutions[4], uint32_t rpm, uint32_t id, uint32_t token);
 } ExecIo;
 
 typedef struct
@@ -77,6 +79,7 @@ typedef struct
     uint32_t mode, fault, tick_ms, arm_ms, stop_ms, control_ms;
     uint32_t have_goal, enabled_wheels, stop_confirmed;
     uint32_t route_zone; /* version9在PC0准备前绑定，启动后不可修改。 */
+    uint32_t position_token; /* 已交给io.position的小步票据，防止重复下发。 */
 #ifdef EXEC_PREVIEW
     /* 仅主机模型拥有此缓冲；板端编译和串口协议没有动态装载入口。 */
     uint32_t preview_count, preview_zone;

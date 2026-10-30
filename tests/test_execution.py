@@ -110,6 +110,7 @@ class SimTransport(Device):
         self.sensor_offset_rad = 0.
         self.previous_raw_yaw = None
         self.crossed_yaw_wrap = False
+        self.position_count = 0
 
     def write(self, wire):
         self.requests += p.Decoder().feed(wire)
@@ -120,7 +121,13 @@ class SimTransport(Device):
         for _ in range(steps):
             target = (c.c_int16 * 4)()
             self.lib.Device_Target(target)
-            self.plant.targets = [v * s for v, s in zip(target, self.signs)]
+            revolutions, rpm, count = (c.c_double * 4)(), c.c_uint32(), c.c_uint32()
+            if self.lib.Device_Position(revolutions, c.byref(rpm), c.byref(count)):
+                if count.value != self.position_count:
+                    self.position_count = count.value
+                    self.plant.move([v * s for v, s in zip(revolutions, self.signs)], rpm.value)
+            else:
+                self.plant.speed([v * s for v, s in zip(target, self.signs)])
             self.plant.integrate()
             tick = self.plant.ms
             if tick % 10 == 0:
@@ -203,6 +210,8 @@ class ExecutionTests(unittest.TestCase):
         cls.lib.Device_Read.restype = c.c_uint16
         cls.lib.Device_Tick.argtypes = [c.c_uint32, c.POINTER(c.c_int64), c.POINTER(c.c_int16), c.c_int16, c.c_int16]
         cls.lib.Device_Target.argtypes = [c.POINTER(c.c_int16)]
+        cls.lib.Device_Position.argtypes = [c.POINTER(c.c_double), c.POINTER(c.c_uint32), c.POINTER(c.c_uint32)]
+        cls.lib.Device_Position.restype = c.c_uint32
         cls.lib.Device_Value.argtypes = [c.c_uint]
         cls.lib.Device_Value.restype = c.c_uint32
         cls.lib.Device_Ref.argtypes = [c.c_double, c.POINTER(Reference)]

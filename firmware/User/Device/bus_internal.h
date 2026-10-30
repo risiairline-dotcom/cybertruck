@@ -11,6 +11,8 @@ void Bus_Setup(const uint8_t address[4]);
 int Bus_Start(void);
 void Bus_End(void);
 int Bus_Speed(const int16_t rpm[4]);
+/* 活动流内四轮FD（模式02，相对当前实时位置），与速度共用最新快照和整批发送，期间查询照常。 */
+int Bus_Position(const uint8_t dir[4], uint16_t rpm, const uint32_t pulses[4]);
 void Bus_Stop(void);
 int Bus_Rearm(void);
 uint8_t Bus_Send(const BusFrame *frames, uint8_t count);

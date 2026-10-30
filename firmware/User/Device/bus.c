@@ -25,6 +25,11 @@ static uint8_t job, job_wheel, batch, batch_wheel, latest, query_index, prefer_q
 static uint8_t stop_bits[32], stop_address, four_stop;
 static uint16_t stop_cursor = 1;
 static int16_t latest_rpm[4], batch_rpm[4];
+/* 最新快照/当前批次是四轮FD位置小步而非速度；与速度互相替换，不并存。 */
+static uint8_t latest_position, batch_position;
+static uint8_t latest_dir[4], batch_dir[4];
+static uint16_t latest_position_rpm, batch_position_rpm;
+static uint32_t latest_pulses[4], batch_pulses[4];
 static uint32_t batch_sent_tick[4];
 static uint32_t latest_sequence, batch_sequence, batch_tick, query_tick, stop_tick;
 static uint32_t seen_errors, seen_overflow;
@@ -79,6 +84,8 @@ static void ClearMotion(void)
     batch = 0;
     batch_wheel = 0;
     finite_pending = 0;
+    latest_position = 0;
+    batch_position = 0;
     memset(latest_rpm, 0, sizeof(latest_rpm));
     memset(batch_rpm, 0, sizeof(batch_rpm));
 }
@@ -240,10 +247,45 @@ int Bus_Speed(const int16_t rpm[4])
     if (latest)
         bus_diag.replaced++;
     memcpy(latest_rpm, rpm, sizeof(latest_rpm));
+    latest_position = 0;
     latest = 1;
     latest_sequence = ++bus_diag.speed_sequence;
     Depth();
     return 1;
+}
+int Bus_Position(const uint8_t dir[4], uint16_t rpm, const uint32_t pulses[4])
+{
+    uint8_t i;
+    if (!dir || !pulses || !rpm || rpm > MOTOR_MAX_COMMAND_RPM || !bus_diag.active || bus_diag.locked)
+    {
+        bus_diag.rejected++;
+        return 0;
+    }
+    for (i = 0; i < 4; i++)
+        if (dir[i] > 1 || !pulses[i])
+        {
+            bus_diag.rejected++;
+            return 0;
+        }
+    if (latest)
+        bus_diag.replaced++;
+    memcpy(latest_dir, dir, sizeof(latest_dir));
+    memcpy(latest_pulses, pulses, sizeof(latest_pulses));
+    latest_position_rpm = rpm;
+    latest_position = 1;
+    latest = 1;
+    latest_sequence = ++bus_diag.speed_sequence;
+    Depth();
+    return 1;
+}
+static uint8_t BuildBatch(uint8_t wheel, BusFrame frames[2])
+{
+    uint16_t rpm;
+    if (batch_position)
+        return Drive_Build(addresses[wheel], 0xFD, batch_dir[wheel], batch_position_rpm, 0,
+                           batch_pulses[wheel], 2, 0, frames);
+    rpm = (uint16_t)(batch_rpm[wheel] < 0 ? -batch_rpm[wheel] : batch_rpm[wheel]);
+    return Drive_Build(addresses[wheel], 0xF6, (uint8_t)(batch_rpm[wheel] < 0), rpm, 0, 0, 0, 0, frames);
 }
 void Bus_Cancel(void)
 {
@@ -716,7 +758,17 @@ static void Complete(uint32_t now)
     {
         batch_sent_tick[batch_wheel] = can_diag.tx_done_tick;
         batch_wheel++;
-        if (batch_wheel == 4)
+        if (batch_wheel == 4 && batch_position)
+        {
+            batch = 0;
+            batch_position = 0;
+            bus_diag.position_sent_tick = now;
+            bus_diag.position_sent_sequence = batch_sequence;
+            bus_diag.speed_span_ms = now - batch_tick;
+            prefer_query = hold_watch ? 8U : BUS_QUERIES_PER_BATCH;
+            bus_diag.speed_batches++;
+        }
+        else if (batch_wheel == 4)
         {
             batch = 0;
             for (i = 0; i < 4; i++)
@@ -754,7 +806,6 @@ void Bus_Poll(void)
 {
     BusFrame frames[2];
     uint32_t now = HAL_GetTick();
-    uint16_t rpm;
     uint8_t i, count, op;
     uint16_t scan, address;
     /* 已观察到的错误先取消旧事务，避免先推进下一帧再处理故障。 */
@@ -832,9 +883,7 @@ void Bus_Poll(void)
     }
     else if (batch)
     {
-        rpm = (uint16_t)(batch_rpm[batch_wheel] < 0 ? -batch_rpm[batch_wheel] : batch_rpm[batch_wheel]);
-        count = Drive_Build(addresses[batch_wheel], 0xF6, (uint8_t)(batch_rpm[batch_wheel] < 0), rpm, 0, 0, 0,
-                            0, frames);
+        count = BuildBatch(batch_wheel, frames);
         if (count)
             (void)Submit(JOB_SPEED, batch_wheel, frames, count);
     }
@@ -896,13 +945,17 @@ void Bus_Poll(void)
     else if (bus_diag.active && latest && !prefer_query)
     {
         memcpy(batch_rpm, latest_rpm, sizeof(batch_rpm));
+        memcpy(batch_dir, latest_dir, sizeof(batch_dir));
+        memcpy(batch_pulses, latest_pulses, sizeof(batch_pulses));
+        batch_position_rpm = latest_position_rpm;
+        batch_position = latest_position;
         batch_sequence = latest_sequence;
         latest = 0;
+        latest_position = 0;
         batch = 1;
         batch_wheel = 0;
         batch_tick = now;
-        rpm = (uint16_t)(batch_rpm[0] < 0 ? -batch_rpm[0] : batch_rpm[0]);
-        count = Drive_Build(addresses[0], 0xF6, (uint8_t)(batch_rpm[0] < 0), rpm, 0, 0, 0, 0, frames);
+        count = BuildBatch(0, frames);
         if (count)
             (void)Submit(JOB_SPEED, 0, frames, count);
     }

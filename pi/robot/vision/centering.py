@@ -75,8 +75,12 @@ class Centering:
         self.calibration=candidate
         self.calibration_error=''
 
-    def begin(self, arrival, mode, now):
+    def begin(self, arrival, mode, now, yaw_correction_deg=0.):
+        """yaw_correction_deg：粗停航向相对站位朝向的修正量（度，逆时针为正），由任务层或人工给出。"""
         if mode not in ('manual','auto'):raise ValueError('微调模式无效')
+        if (type(yaw_correction_deg) not in (int,float) or not math.isfinite(yaw_correction_deg) or
+                abs(yaw_correction_deg)>3):
+            raise ValueError('航向修正须在±3度以内')
         binding=arrival.body[36:68].hex()
         if mode=='auto':
             if self.calibration is None:raise ValueError(self.calibration_error)
@@ -88,6 +92,7 @@ class Centering:
         self.auto_steps=0;self.total_mm=0.;self.previous_radius=None;self.not_improving=0
         self.completed=None;self.trace.clear()
         self.reference_yaw=None
+        self.yaw_correction=math.radians(yaw_correction_deg)
 
     def cancel(self,reason):
         self.status='CANCELLED';self.reason=reason;self.mode='manual';self.pending_measure=None
@@ -189,6 +194,18 @@ class Centering:
         command=[0.,0.];command[axis]=mm
         return dict(state='STEP',command_mm=command)
 
+    def _turn(self,arrival,link,degrees,now):
+        if self.auto_steps>=12:
+            self.pause('达到本轮12步预算，保持停车');return None
+        degrees=max(-3.,min(3.,degrees))
+        degrees=math.copysign(max(.1,abs(degrees)),degrees)
+        self.pending_measure=None
+        try:arrival.move(link,'yaw',degrees,now)
+        except ValueError as exc:self.pause(str(exc));return None
+        self.auto_steps+=1;self.previous_radius=None;self.not_improving=0
+        self.status='MOVING';self.key=None
+        return None
+
     def advance(self,arrival,link,snapshot,now):
         """只消费后台缓存，最多排一个原Arrival目标；返回待异步保存的数据。"""
         if self.status in ('IDLE','CANCELLED','CENTERED'):return None
@@ -211,10 +228,13 @@ class Centering:
         if self.mode=='auto':
             if (not link.execution.get('pose_valid') or type(yaw) not in (int,float) or not math.isfinite(yaw)):
                 self.pause('底盘位姿反馈无效，保持停车');return None
-            if self.reference_yaw is None:self.reference_yaw=yaw
+            if self.reference_yaw is None:self.reference_yaw=yaw+self.yaw_correction
             difference=math.atan2(math.sin(yaw-self.reference_yaw),math.cos(yaw-self.reference_yaw))
-            if abs(difference)>math.radians(1):
-                self.pause('车头偏转超过本轮固定朝向范围，保持停车');return None
+            if abs(difference)>math.radians(3.2):
+                self.pause('车头偏转超过本轮3度修正范围，保持停车');return None
+            if abs(difference)>math.radians(.3):
+                # 先修航向再看画面：夹爪中心与车体中心不重合，航向误差会变成夹爪处横向误差。
+                return self._turn(arrival,link,-math.degrees(difference),now)
         key=(arrival.action_id,arrival.steps)
         if self.key!=key:
             self.key=key;self.barrier+=1;self.floor=now+.05;self.ready_at=now

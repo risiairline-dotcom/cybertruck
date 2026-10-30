@@ -24,6 +24,8 @@ static uint8_t query_slot;
 /* 旧零速票据路径扩展到micro整批非零TXOK；必须同时匹配动作、序号及四轮RPM。 */
 static uint32_t zero_sequence, zero_action, zero_id;
 static int16_t acknowledged_rpm[4];
+/* 位置小步整批TXOK票据：同一动作、同一Bus序号才回调Exec_Sent。 */
+static uint32_t position_sequence, position_action, position_token;
 static uint32_t stop_barrier, stable_tick;
 static int64_t stable_position[4];
 static ImuSample gyro;
@@ -165,11 +167,74 @@ static int Send(const int16_t rpm[4], uint32_t action, uint32_t zero)
     return 1;
 }
 
+/* 每轮FD脉冲数 = 电机整步数 × 驱动器细分，取自复位或重新使能后读回的0x42配置。 */
+static uint32_t PulsesPerRev(const MotorConfig *config)
+{
+    if (!config->valid)
+    {
+        return 0;
+    }
+    return (config->motor_type == 0x19 ? 200U : 400U) * config->microsteps;
+}
+
+static int WheelConfigReady(void)
+{
+    const BusWheel *wheels = Bus_Wheels();
+    unsigned index;
+    for (index = 0; index < 4; index++)
+    {
+        if (!PulsesPerRev(&wheels[index].config))
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* 微调配置10依赖四轮细分换算位置小步；配置未读齐前不准备PC0、不点火。 */
+static int MicroReady(void)
+{
+    return executor.config.version != 10 || WheelConfigReady();
+}
+
+static int Position(const double revolutions[4], uint32_t rpm, uint32_t action, uint32_t token)
+{
+    const BusWheel *wheels = Bus_Wheels();
+    uint8_t dir[4];
+    uint32_t pulses[4];
+    unsigned index;
+    if (!action || !token || !rpm || rpm > MOTOR_MAX_COMMAND_RPM)
+    {
+        return 0;
+    }
+    for (index = 0; index < 4; index++)
+    {
+        double magnitude = fabs(revolutions[index]) * PulsesPerRev(&wheels[index].config);
+        /* 小步上限6mm轮缘弧长，远小于一圈；越界说明换算或配置异常。 */
+        if (!isfinite(magnitude) || magnitude < .5 || magnitude > PulsesPerRev(&wheels[index].config))
+        {
+            return 0;
+        }
+        pulses[index] = (uint32_t)(magnitude + .5);
+        dir[index] = (uint8_t)(revolutions[index] < 0);
+    }
+    if (!Bus_Position(dir, (uint16_t)rpm, pulses))
+    {
+        return 0;
+    }
+    position_sequence = bus_diag.speed_sequence;
+    position_action = action;
+    position_token = token;
+    zero_id = zero_action = zero_sequence = 0;
+    return 1;
+}
+
 static void Stop(void)
 {
     Bus_Stop();
     diag_busy = enable_sent = 0;
     zero_id = zero_sequence = zero_action = 0;
+    position_sequence = position_action = position_token = 0;
     stop_barrier = stable_tick = 0;
     Bus_Release();
 }
@@ -388,7 +453,7 @@ static uint8_t Command(uint8_t type, const uint8_t *data, uint16_t size, uint8_t
         return COMM_READONLY;
     if (MechPort_Holding())
     {
-        /* 本轮租约只开放固定朝向、单轴1～5mm低速微调。 */
+        /* 本轮租约只开放单轴1～5mm平移或3°以内纯转向的低速微调。 */
         if (type == 59 && (size != 8 || Frame_Get(data, 4) != MechPort_HoldTicket() ||
                           Frame_Get(data + 4, 4) != 10))
             return COMM_READONLY;
@@ -407,11 +472,13 @@ static uint8_t Command(uint8_t type, const uint8_t *data, uint16_t size, uint8_t
             if (size != sizeof(goal))
                 return COMM_FORMAT;
             memcpy(&goal, data, sizeof(goal));
-            if (executor.config.version != 10 || goal.reference.kind != 1 ||
-                goal.reference.yaw_rad != 0 ||
-                !((goal.reference.x_m == 0) != (goal.reference.y_m == 0)) ||
-                hypot(goal.reference.x_m, goal.reference.y_m) > .00501 ||
-                goal.reference.linear.velocity > .01)
+            if (executor.config.version != 10 || goal.reference.linear.velocity > .01 ||
+                goal.reference.angular.velocity > .1001 ||
+                (goal.reference.kind == 1 ? (goal.reference.yaw_rad != 0 ||
+                    !((goal.reference.x_m == 0) != (goal.reference.y_m == 0)) ||
+                    hypot(goal.reference.x_m, goal.reference.y_m) > .00501) :
+                 goal.reference.kind != 2 || goal.reference.x_m != 0 || goal.reference.y_m != 0 ||
+                    fabs(goal.reference.yaw_rad) > .05236))
                 return COMM_READONLY;
         }
         if (((type >= 48 && type <= 57) || (type >= 61 && type <= 63) ||
@@ -471,7 +538,7 @@ static uint8_t Command(uint8_t type, const uint8_t *data, uint16_t size, uint8_t
             uint32_t zone = size == 16 ? (uint32_t)Frame_Get(data + 8, 4) : 0;
             uint32_t epoch = size == 16 ? (uint32_t)Frame_Get(data + 12, 4) : 0;
             uint8_t ready = (uint8_t)(!startup_pending && !Fault() && !executor.fault &&
-                Exec_Ready(&executor, now) &&
+                Exec_Ready(&executor, now) && MicroReady() &&
                 !MechPort_Owned() && Ready(now, 0, 0));
             if ((configured == 9 && (size != 16 || !zone || zone != Select_Zone(&zone_switch) ||
                                      !epoch || epoch != zone_switch.epoch)) ||
@@ -559,7 +626,7 @@ static uint8_t Command(uint8_t type, const uint8_t *data, uint16_t size, uint8_t
 void Base_Init(void)
 {
     CAN_FilterTypeDef filter = {0};
-    ExecIo io = {Ready, EnableWheel, Bus_Start, Send, Stop, Fault, Stopped, Rearm};
+    ExecIo io = {Ready, EnableWheel, Bus_Start, Send, Stop, Fault, Stopped, Rearm, Position};
     CommHooks hooks = {StopCommand, Command};
     memset(&park_failure, 0, sizeof(park_failure));
     query_slot = 0;
@@ -635,6 +702,25 @@ static void Query(uint32_t now)
             }
             return;
         }
+    }
+    if (executor.config.version == 10 && !WheelConfigReady())
+    {
+        /* 微调换算需要四轮细分；复位/Rearm后先补读缺失配置，不推进常规轮询序号。 */
+        const BusWheel *wheels = Bus_Wheels();
+        unsigned wheel = 0;
+        while (PulsesPerRev(&wheels[wheel].config))
+        {
+            wheel++;
+        }
+        count = Drive_Build(addresses[wheel], 0x42, 0, 0, 0, 0, 0, 0, frames);
+        if (count && Bus_Send(frames, count))
+        {
+            diag_busy = 1;
+            query_ms = now;
+            if (MechPort_Owned() || MechPort_Holding())
+                query_slot = (uint8_t)((query_slot + 1U) % 5U);
+        }
+        return;
     }
     count = Drive_Build(addresses[query_index / 3], kinds[query_index % 3], 0, 0, 0, 0, 0, 0, frames);
     if (count && Bus_Send(frames, count))
@@ -721,6 +807,11 @@ void Base_Run(void)
     {
         Exec_Sent(&executor, zero_action, zero_id, bus_diag.sent_tick);
     }
+    if (position_sequence && bus_diag.position_sent_sequence == position_sequence)
+    {
+        Exec_Sent(&executor, position_action, position_token, bus_diag.position_sent_tick);
+        position_sequence = 0;
+    }
     Exec_Run(&executor, now);
     MicroCapture(now);
     {
@@ -730,7 +821,7 @@ void Base_Run(void)
         Start_Check(&start_key, &zone_switch, now);
         Start_Run(&start_key, Comm_Boot(), Comm_Session(), now,
             HAL_GPIO_ReadPin(START_KEY_GPIO_Port, START_KEY_Pin) == GPIO_PIN_RESET,
-            (uint8_t)(!Fault() && ready && !MechPort_Owned()));
+            (uint8_t)(!Fault() && ready && MicroReady() && !MechPort_Owned()));
         if (phase >= START_RELEASE && phase <= START_BEEP && start_key.phase == START_ABORTED)
             start_failure = executor.gate;
     }

@@ -1,4 +1,4 @@
-import {firmwareSince} from './workbench-firmware.js?v=2';
+import {firmwareSince} from './workbench-firmware.js?v=3';
 /* 只解释真实反馈；不解锁故障、不推定实物到位，也不发送请求。 */
 const faults = {
     1:'人工零点未建立', 2:'机构反馈超过250毫秒', 3:'机构尚未稳定',

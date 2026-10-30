@@ -26,6 +26,8 @@ typedef struct
     uint32_t stop_sequence, stop_sent_sequence;
     uint32_t query_waiting, query_address, query_code, query_tx_sequence;
     uint32_t query_replies, query_timeouts, query_reply_tick;
+    /* 四轮相对位置小步整批TXOK：与speed_sequence共用序号，不改sent_rpm；不表示已到位。 */
+    uint32_t position_sent_sequence, position_sent_tick;
 } BusDiag;
 enum
 {

@@ -35,13 +35,22 @@ def contract(record, order, zero_version, epoch, transaction_id):
     return body, binding
 
 
-def micro_goal(action_id, axis, millimeters):
-    if axis not in ('x','y') or type(millimeters) not in (int,float) or not math.isfinite(millimeters):
+def micro_goal(action_id, axis, amount):
+    """axis为x/y时amount是毫米（1～5），为yaw时是度（0.1～3，逆时针为正）。"""
+    if axis not in ('x','y','yaw') or type(amount) not in (int,float) or not math.isfinite(amount):
         raise ValueError('微调轴或位移无效')
-    if not 1 <= abs(millimeters) <= 5 or type(action_id) is not int or not 0 < action_id < 2**32:
-        raise ValueError('本轮仅开放1～5毫米单轴小位移')
-    x, y = (millimeters/1000,0) if axis=='x' else (0,millimeters/1000)
-    spec = SPEC_DATA.pack(1,x,y,0, 0,0,0,0, 0,0,
+    if type(action_id) is not int or not 0 < action_id < 2**32:
+        raise ValueError('微调动作号无效')
+    if axis == 'yaw':
+        if not .1 <= abs(amount) <= 3:
+            raise ValueError('本轮仅开放0.1～3度纯转向')
+        kind, x, y, yaw = 2, 0, 0, math.radians(amount)
+    else:
+        if not 1 <= abs(amount) <= 5:
+            raise ValueError('本轮仅开放1～5毫米单轴小位移')
+        kind, yaw = 1, 0
+        x, y = (amount/1000,0) if axis=='x' else (0,amount/1000)
+    spec = SPEC_DATA.pack(kind,x,y,yaw, 0,0,0,0, 0,0,
                           .01,.05,.2,.1,.3,1, 0, 0,0,0,0,0)
     return struct.pack('<II',action_id,10000)+spec
 
@@ -110,14 +119,16 @@ class Arrival:
         self.waiting=(request,now,kind)
         return True
 
-    def move(self, link, axis, mm, now):
+    def move(self, link, axis, amount, now):
         if self.phase!='READY' or self.waiting:
             raise ValueError('尚未进入等待小位移状态')
         self.check(link,now)
         if self.steps>=20:
             raise ValueError('本次20步已用完，请返回机械控制并检查标定')
+        if axis=='yaw' and not firmware_since(link.firmware, 52):
+            raise ValueError('纯转向微调需要GC-BASE-0.3.52及以上固件')
         self.action_id=max(self.action_id,link.execution.get('action_id',0))+1
-        data=micro_goal(self.action_id,axis,mm)
+        data=micro_goal(self.action_id,axis,amount)
         if not self.queue(link,34,data,now):
             raise ValueError('上一请求未完成')
         self.phase='GOAL';self.steps+=1
@@ -176,7 +187,9 @@ class Arrival:
                 else:
                     self.queue(link,32,config_payload(self.profile),now)
             elif self.phase=='KEY_PREPARE':
-                if not link.execution.get('pose_valid') or now-self.started<.4:
+                # 配置10生效后板端还要补读四轮0x42细分配置，留0.4秒再请求PC0准备。
+                if (not link.execution.get('pose_valid') or self.stage_clock[0]!='KEY_PREPARE' or
+                        now-self.stage_clock[1]<.4):
                     return None
                 self.queue(link,59,struct.pack('<II',struct.unpack_from('<I',self.body)[0],10),now)
                 self.phase='KEY_REQUEST'

@@ -1,4 +1,4 @@
-"""毫米微调：真实C跟踪/里程计，合成异步反馈与电机滞后；不是本车物理证明。"""
+"""毫米微调：真实C跟踪/里程计，合成异步反馈与驱动器位置模式；不是本车物理证明。"""
 import math
 import json
 import subprocess
@@ -14,7 +14,8 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 class DelayedMicro(ClosedLoop):
-    def __init__(self, library, axis='y', mm=5, period=120, tau=.2,
+    """axis为x/y时amount是毫米，为yaw时是度。"""
+    def __init__(self, library, axis='y', amount=5, period=120, tau=.2,
                  gain=1., ack=True, stalled=False, send_delay_ms=10):
         calibration=fixture();calibration.calibration=10;calibration.gap_ms=250;calibration.margin_counts=64
         config=settings(calibration)
@@ -31,9 +32,17 @@ class DelayedMicro(ClosedLoop):
                          disturbance=False,ack=ack,stalled=stalled,send_delay_ms=send_delay_ms)
         self.plant.tau=[tau*.7,tau,tau*1.2,tau*.9]
         self.plant.gains=[v*gain for v in (.85,1.15,.95,1.05)]
+        self.moves=[];self.peak_wheel_rpm=0.
+        move,integrate=self.plant.move,self.plant.integrate
+        def record(revolutions,rpm):
+            self.moves.append((self.plant.ms,list(revolutions),rpm));move(revolutions,rpm)
+        def advance(disturbance=False):
+            integrate(disturbance);self.peak_wheel_rpm=max(self.peak_wheel_rpm,*map(abs,self.plant.rpm))
+        self.plant.move,self.plant.integrate=record,advance
         for _ in range(40):self.advance(False)
-        spec=Spec();spec.kind=1
-        setattr(spec,axis+'_m',mm/1000)
+        spec=Spec()
+        if axis=='yaw':spec.kind=2;spec.yaw_rad=math.radians(amount)
+        else:spec.kind=1;setattr(spec,axis+'_m',amount/1000)
         spec.linear=Limit(.01,.05,.2);spec.angular=Limit(.1,.3,1)
         self.begin(Goal(1,10000,spec))
         self.commands=[]
@@ -48,6 +57,11 @@ class DelayedMicro(ClosedLoop):
         if hasattr(self,'commands'):
             self.commands.append((self.elapsed_ms,self.tracker.output()))
         return value
+
+
+def duration_ms(move):
+    _,revolutions,rpm=move
+    return max(40,abs(revolutions[0])/(rpm/60)*1000)
 
 
 class MicroDynamicsTests(unittest.TestCase):
@@ -69,21 +83,36 @@ class MicroDynamicsTests(unittest.TestCase):
                         self.assertLessEqual(result['output']['position_error_m'],.0008)
                         self.assertLessEqual(abs(getattr(model.plant,axis)-mm/1000),.001)
                         self.assertTrue(model.acknowledged)
-                        self.assertLessEqual(result['peak_rpm'],2)
-                        # 每笔移动指令为四轮等幅，不再有独立取整造成的半组停转。
-                        for _,out in model.commands:
-                            self.assertEqual(len(set(map(abs,out['rpm']))),1)
-                        reports.append(dict(period_ms=period,tau_s=tau,axis=axis,mm=mm,
+                        self.assertLessEqual(model.peak_wheel_rpm,2+1e-9)
+                        # 每步四轮同幅、只走一个方向；全程不发非零速度命令。
+                        for _,revolutions,rpm in model.moves:
+                            self.assertEqual(len({round(abs(v),12) for v in revolutions}),1)
+                            self.assertLessEqual(rpm,2)
+                        for _,out in model.commands:self.assertEqual(out['rpm'],[0]*4)
+                        reports.append(dict(period_ms=period,tau_s=tau,axis=axis,mm=mm,moves=len(model.moves),
                                             elapsed_ms=result['elapsed_ms'],error_m=result['output']['position_error_m']))
-        (ROOT/'output/tests/micro_dynamics_0349.json').write_text(json.dumps(reports,indent=2),encoding='utf-8')
+        (ROOT/'output/tests/micro_dynamics_0352.json').write_text(json.dumps(reports,indent=2),encoding='utf-8')
 
-    def test_missing_motion_ack_stops_within_feedback_budget(self):
+    def test_turn_goal_reaches_heading_in_capped_steps(self):
+        for degrees in (3,-3,.5):
+            with self.subTest(degrees=degrees):
+                model=DelayedMicro(self.library,'yaw',degrees)
+                result=model.run(11000)
+                self.assertEqual(result['state'],'COMPLETE',result['output'])
+                self.assertLessEqual(abs(model.plant.yaw-math.radians(degrees)),math.radians(.2))
+                self.assertLessEqual(math.hypot(model.plant.x,model.plant.y),.0008)
+                # 3°在0.204m杠杆上约10.7mm轮缘弧长，按单步6mm上限至少分两步。
+                self.assertGreaterEqual(len(model.moves),2 if abs(degrees)==3 else 1)
+                for _,revolutions,rpm in model.moves:
+                    self.assertEqual(rpm,1)
+                    self.assertLessEqual(abs(revolutions[0])*2*math.pi*.05,.006+1e-12)
+
+    def test_missing_motion_ack_stops_without_resend(self):
         model=DelayedMicro(self.library,ack=False)
         result=model.run(11000)
         self.assertEqual(result['state'],'FAILED')
         self.assertEqual(result['output']['fault'],7)
-        nonzero=[at for at,out in model.commands if any(out['rpm'])]
-        self.assertLess(max(nonzero)-min(nonzero),250)
+        self.assertEqual(len(model.moves),1)
 
     def test_heading_bias_stays_within_tolerance(self):
         reports=[]
@@ -96,26 +125,32 @@ class MicroDynamicsTests(unittest.TestCase):
                 self.assertLessEqual(abs(result['plant']['yaw_rad']),math.radians(.2))
                 self.assertLessEqual(result['output']['position_error_m'],.0008)
                 reports.append(dict(delay_ms=delay,gain_difference=gain,result=result['output']))
-        (ROOT/'output/tests/micro_heading_0349.json').write_text(json.dumps(
+        (ROOT/'output/tests/micro_heading_0352.json').write_text(json.dumps(
             dict(synthetic=True,cases=reports),indent=2),encoding='utf-8')
 
-    def test_excessive_imbalance_is_not_reported_as_accurate_completion(self):
+    def test_stuck_wheel_is_not_reported_as_accurate_completion(self):
         model=DelayedMicro(self.library)
-        model.plant.gains=[1.8,1.8,.2,.2]
+        integrate=model.plant.integrate
+        def stuck(disturbance=False):
+            if model.plant.position_goal is not None:model.plant.position_goal[0]=model.plant.turns[0]
+            model.plant.targets[0]=0;integrate(disturbance)
+        model.plant.integrate=stuck
         result=model.run(11000)
-        self.assertEqual(result['state'],'FAILED')
-        self.assertEqual(result['output']['fault'],7)
-        self.assertEqual(result['output']['rpm'],[0]*4)
+        if result['state']=='COMPLETE':
+            self.assertLessEqual(abs(model.plant.y-.005),.001)
+            self.assertLessEqual(abs(model.plant.yaw),math.radians(.2))
+        else:
+            self.assertEqual(result['state'],'FAILED')
+            self.assertEqual(result['output']['rpm'],[0]*4)
 
     def test_motion_ack_without_zero_ack_never_launches_second_step(self):
         model=DelayedMicro(self.library)
         original=model.tracker.sent
-        model.tracker.sent=lambda action,token,tick: original(action,token,tick) if any(model.plant.targets) else 0
+        model.tracker.sent=lambda action,token,tick: original(action,token,tick) if model.plant.position_goal is not None else 0
         result=model.run(11000)
         self.assertEqual(result['state'],'FAILED')
-        nonzero=[at for at,out in model.commands if any(out['rpm'])]
-        self.assertLess(max(nonzero)-min(nonzero),600)
         self.assertEqual(result['output']['fault'],7)
+        self.assertEqual(len(model.moves),1)
 
     def test_stall_still_times_out_and_zeroes(self):
         model=DelayedMicro(self.library,stalled=True)
@@ -123,6 +158,8 @@ class MicroDynamicsTests(unittest.TestCase):
         self.assertEqual(result['state'],'FAILED')
         self.assertEqual(result['output']['fault'],7)
         self.assertEqual(result['output']['rpm'],[0]*4)
+        # 车轮始终未动：首步得不到编码器进展即超时，不追加第二步。
+        self.assertEqual(len(model.moves),1)
 
     def test_lost_feedback_stops_without_another_step(self):
         model=DelayedMicro(self.library)
@@ -133,21 +170,37 @@ class MicroDynamicsTests(unittest.TestCase):
         self.assertEqual(result['output']['fault'],2)
         self.assertEqual(result['output']['rpm'],[0]*4)
 
-    def test_steps_wait_for_zero_tx_and_new_stable_feedback(self):
-        model=DelayedMicro(self.library,period=160)
-        model.run(11000)
-        bursts=[];active=False
-        for at,out in model.commands:
-            if any(out['rpm']):
-                if not active:bursts.append([at,at])
-                bursts[-1][1]=at
-                active=True
-            else:active=False
-        self.assertGreater(len(bursts),1)
-        for previous,next_ in zip(bursts,bursts[1:]):
-            self.assertGreaterEqual(next_[0]-previous[1],150)
-        self.assertGreaterEqual(len(model.acknowledged),len(bursts))
+    def test_steps_wait_for_execution_zero_tx_and_stable_feedback(self):
+        model=DelayedMicro(self.library,'yaw',3,period=160)
+        result=model.run(11000)
+        self.assertEqual(result['state'],'COMPLETE')
+        self.assertGreater(len(model.moves),1)
+        for previous,next_ in zip(model.moves,model.moves[1:]):
+            self.assertGreaterEqual(next_[0]-previous[0],duration_ms(previous)+150)
+        self.assertGreaterEqual(len(model.acknowledged),2*len(model.moves))
+
+    def test_late_drive_start_is_not_cut_short_by_zero_command(self):
+        """驱动器起步迟滞超过估算执行时间：未走过一半前不能发零速打断小步。"""
+        for delay_ms in (100,300,600):
+            with self.subTest(delay_ms=delay_ms):
+                model=DelayedMicro(self.library,'y',1)
+                plant=model.plant;integrate=plant.integrate;state=dict(goal=None,since=0)
+                def late(disturbance=False):
+                    goal=plant.position_goal
+                    if goal is not state['goal']:state.update(goal=goal,since=plant.ms)
+                    if goal is not None and plant.ms-state['since']<delay_ms:
+                        plant.position_goal=None;saved=plant.targets[:];plant.targets[:]=[0]*4
+                        integrate(disturbance);plant.position_goal=goal;plant.targets[:]=saved
+                    else:integrate(disturbance)
+                plant.integrate=late
+                result=model.run(11000)
+                self.assertEqual(len(model.moves),1)
+                if delay_ms<=300:
+                    self.assertEqual(result['state'],'COMPLETE',result['output'])
+                    self.assertLessEqual(abs(model.plant.y-.001),.0008)
+                else:
+                    # 超出1mm小步的3倍+500ms执行期限：按超时停止，不提前发零速、不补第二步。
+                    self.assertEqual((result['state'],result['output']['fault']),('FAILED',7))
 
 
 if __name__=='__main__':unittest.main()
-

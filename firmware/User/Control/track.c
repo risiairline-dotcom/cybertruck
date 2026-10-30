@@ -26,6 +26,7 @@ static void Zero(Track *track)
         track->output.rpm[index] = 0;
         track->slew[index] = 0;
     }
+    track->output.micro_hold = 0;
 }
 
 static int Fail(Track *track, unsigned reason)
@@ -121,6 +122,19 @@ static int SameGoal(const TrackGoal *first, const TrackGoal *last)
     return (a->kind != 3 && a->kind != 4) || (a->path.lead_m == b->path.lead_m && a->path.tail_m == b->path.tail_m &&
         a->path.radius_m == b->path.radius_m && a->path.blend_m == b->path.blend_m &&
         a->path.turn == b->path.turn && a->path.reverse == b->path.reverse);
+}
+
+/* 微调只接受单轴1～5mm平移，或0.1°～3°纯转向（修正粗停航向，夹爪偏置下航向误差会变成横向误差）。 */
+static int MicroGoal(const RefSpec *reference)
+{
+    double distance = hypot(reference->x_m, reference->y_m);
+    if (reference->kind == 1)
+    {
+        return reference->yaw_rad == 0 && (reference->x_m == 0 || reference->y_m == 0) &&
+            distance >= .000999 && distance <= .005001;
+    }
+    return reference->kind == 2 && distance == 0 &&
+        fabs(reference->yaw_rad) >= .0017 && fabs(reference->yaw_rad) <= .05236;
 }
 
 static int Stamp(const Track *track, const RxStamp *sample, const RxStamp *previous,
@@ -294,14 +308,18 @@ int Track_Start(Track *track, const TrackGoal *goal,
     {
         return -1;
     }
-    if (track->config.micro_steps && (goal->reference.kind != 1 || goal->reference.yaw_rad != 0 ||
-        (goal->reference.x_m != 0 && goal->reference.y_m != 0) ||
-        hypot(goal->reference.x_m, goal->reference.y_m) > .005001 ||
-        hypot(goal->reference.x_m, goal->reference.y_m) < .000999)) return -1;
+    if (track->config.micro_steps && !MicroGoal(&goal->reference))
+    {
+        return -1;
+    }
     if (track->config.micro_steps && !track->micro_heading_valid)
     {
         track->micro_heading = observation->yaw_rad;
         track->micro_heading_valid = 1;
+    }
+    if (track->config.micro_steps && goal->reference.kind == 2)
+    {
+        track->micro_heading = observation->yaw_rad + goal->reference.yaw_rad;
     }
     track->plan = track->candidate;
     track->goal = *goal;
@@ -314,7 +332,6 @@ int Track_Start(Track *track, const TrackGoal *goal,
     track->have_zero_ack = track->stabilizing = 0;
     track->position_active = track->yaw_active = 0;
     track->micro_phase = track->micro_begin_ms = track->micro_duration_ms = 0;
-    memset(track->micro_rpm, 0, sizeof(track->micro_rpm));
     track->micro_token = track->micro_requested_ms = track->micro_acked = 0;
     Zero(track);
     return 1;
@@ -325,25 +342,62 @@ static double Clamp(double value, double limit)
     return value < -limit ? -limit : value > limit ? limit : value;
 }
 
+/* 四轮位置与速度反馈都在指定时刻之后收到。 */
+static int FeedbackAfter(const TrackObservation *sample, uint32_t tick)
+{
+    unsigned index;
+    for (index = 0; index < 4; index++)
+    {
+        uint32_t position = sample->position[index].last_ms - tick;
+        uint32_t speed = sample->speed[index].last_ms - tick;
+        if (!position || position >= TRACK_HALF || !speed || speed >= TRACK_HALF)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* 本步已沿指令方向走过至少一半：驱动器起步迟滞时估算时间到、车轮仍静止不能当作已执行，
+ * 否则零速命令会打断尚未开始的位置小步。 */
+static int MicroProgress(const Track *track, const TrackObservation *sample)
+{
+    double moved;
+    if (track->micro_axis == 2)
+    {
+        moved = sample->yaw_rad - track->micro_origin[2];
+    }
+    else
+    {
+        double heading = track->micro_origin[2] + (track->micro_axis == 1 ? 1.5707963267948966 : 0);
+        moved = cos(heading) * (sample->pose.x_m - track->micro_origin[0]) +
+            sin(heading) * (sample->pose.y_m - track->micro_origin[1]);
+    }
+    return moved * track->micro_sign >= track->micro_amount / 2;
+}
+
 /* 毫米级标定不在旧反馈上连续换向。每次只选一个车体系平移轴或纯转向，
- * 四轮同幅整数RPM，消除分别取整产生的半组车轮停转。
- * 平移最长500ms/转向200ms后经过四轮零速TXOK和150ms新反馈稳定窗口。
- * 小步时间只限定输出预算；实际是否到位仍完全由编码器/IMU决定。 */
-static int MicroCommand(Track *track, const TrackObservation *sample, uint32_t now, double dt)
+ * 交给驱动器按相对当前实时位置执行四轮同幅小步，位移不再取决于低速死区和启停滞后。
+ * 驱动器执行期间不发速度、反馈查询继续；估算时间到且新反馈静止后发零速TXOK，
+ * 再经150ms新反馈稳定窗口。是否到位仍完全由编码器/IMU决定，未到位按新误差再走一步。 */
+static int MicroCommand(Track *track, const TrackObservation *sample, uint32_t now)
 {
     double dx = track->plan.target[0] - sample->pose.x_m;
     double dy = track->plan.target[1] - sample->pose.y_m;
     double angle = track->micro_heading - sample->yaw_rad;
     double c = cos(sample->yaw_rad), s = sin(sample->yaw_rad);
     double x = c * dx + s * dy, y = -s * dx + c * dy;
-    double speed = 2 * 3.14159265358979323846 * track->config.geometry.radius_m / 60;
-    double budget, sign, amplitude, ceiling, duration_limit, change = 0, scale;
+    double lever_m = track->config.geometry.half_length_m + track->config.geometry.half_width_m;
+    double circumference_m = 2 * 3.14159265358979323846 * track->config.geometry.radius_m;
+    double budget_m, sign, rpm, ceiling, revolutions;
     static const int pattern[3][4] = {{1,1,1,1},{-1,1,1,-1},{-1,1,-1,1}};
     unsigned axis, i;
     if (!Track_Reference(track, now, &track->output.reference)) return TRACK_REFERENCE;
     track->output.reference.yaw_rad = track->micro_heading;
     if (track->micro_phase == 1 && track->micro_token && !track->micro_acked &&
         (uint32_t)(now-track->micro_requested_ms) >= track->config.fresh_ms) return TRACK_TIMEOUT;
+    if (track->micro_phase == 1 && track->micro_acked &&
+        (uint32_t)(now-track->micro_begin_ms) > track->micro_duration_ms * 3 + 500) return TRACK_TIMEOUT;
     track->output.position_error_m = hypot(dx,dy);
     track->output.yaw_error_rad = fabs(angle);
     track->output.scale = 1;
@@ -351,56 +405,58 @@ static int MicroCommand(Track *track, const TrackObservation *sample, uint32_t n
     track->position_active = track->yaw_active = 0;
     if (track->micro_phase == 0)
     {
+        /* 航向先于平移：夹爪中心与车体中心不重合，残余航向会在夹爪处放大为横向误差。 */
         if (fabs(angle) > track->config.yaw_tol_rad)
         {
             axis = 2; sign = angle < 0 ? -1 : 1;
-            budget = (fabs(angle) - track->config.yaw_tol_rad / 2) *
-                     (track->config.geometry.half_length_m + track->config.geometry.half_width_m);
+            budget_m = fabs(angle) * lever_m;
         }
         else if (hypot(dx,dy) > track->config.position_tol_m)
         {
             axis = fabs(x) >= fabs(y) ? 0 : 1;
             sign = (axis == 0 ? x : y) < 0 ? -1 : 1;
-            budget = fabs(axis == 0 ? x : y) - track->config.position_tol_m / 2;
+            budget_m = fabs(axis == 0 ? x : y);
         }
         else
         {
             track->micro_phase = 3;
-            budget = 0; axis = 0; sign = 0;
+            budget_m = 0; axis = 0; sign = 0;
         }
         if (track->micro_phase != 3)
         {
-            /* 复用整轮限幅和共同比例斜坡；平移2RPM，纯转向保持1RPM。
-             * 大余量留20%预算给停车响应，近终点缩短时间而非降到1RPM。 */
-            ceiling = axis == 2 ? track->config.correction_rad_s *
-                (track->config.geometry.half_length_m + track->config.geometry.half_width_m) / speed :
-                track->config.correction_m_s / speed;
-            amplitude = axis != 2 ? 2 : 1;
-            amplitude = fmin(amplitude, floor(fmin(ceiling, track->config.max_rpm)));
-            if (amplitude < 1) return TRACK_REFERENCE;
-            duration_limit = axis == 2 ? 200 : 500;
-            if (amplitude > 1 && budget > .002) budget *= .8;
-            track->micro_duration_ms = (uint32_t)fmax(40, fmin(duration_limit, budget / (speed * amplitude) * 1000));
+            /* 平移2RPM、纯转向1RPM，仍受整轮限幅和纠偏速度上限约束。 */
+            ceiling = (axis == 2 ? track->config.correction_rad_s * lever_m : track->config.correction_m_s) /
+                (circumference_m / 60);
+            rpm = fmin(axis != 2 ? 2 : 1, floor(fmin(ceiling, track->config.max_rpm)));
+            if (rpm < 1) return TRACK_REFERENCE;
+            /* 单步轮缘位移不超过6mm；超出部分按新反馈下一步再走，不一次追完。 */
+            revolutions = fmin(budget_m, .006) / circumference_m;
+            track->micro_duration_ms = (uint32_t)fmax(40, revolutions / (rpm / 60) * 1000);
+            track->micro_origin[0] = sample->pose.x_m;
+            track->micro_origin[1] = sample->pose.y_m;
+            track->micro_origin[2] = sample->yaw_rad;
+            track->micro_axis = axis;
+            track->micro_sign = sign;
+            track->micro_amount = fmin(budget_m, .006) / (axis == 2 ? lever_m : 1);
             track->micro_begin_ms = 0;
             track->micro_token = track->micro_acked = 0;
             track->micro_phase = 1;
-            for (i=0;i<4;i++) track->micro_rpm[i] = amplitude * sign * pattern[axis][i];
+            track->output.micro_rpm = (uint32_t)rpm;
+            track->output.micro_hold = 1;
+            for (i=0;i<4;i++) track->output.micro_rev[i] = sign * pattern[axis][i] * revolutions;
         }
     }
     if (track->micro_phase == 1 && track->micro_acked &&
-        (uint32_t)(now-track->micro_begin_ms) >= track->micro_duration_ms)
+        (uint32_t)(now-track->micro_begin_ms) >= track->micro_duration_ms &&
+        FeedbackAfter(sample, track->micro_begin_ms) && Still(track, sample) && MicroProgress(track, sample))
+    {
         track->micro_phase = 2;
-    for (i=0;i<4;i++)
-    {
-        double desired = track->micro_phase == 1 ? track->micro_rpm[i] : 0;
-        change = fmax(change, fabs(desired-track->slew[i]));
+        track->output.micro_hold = 0;
     }
-    scale = change > track->config.slew_rpm_s * dt ? track->config.slew_rpm_s * dt / change : 1;
     for (i=0;i<4;i++)
     {
-        double desired = track->micro_phase == 1 ? track->micro_rpm[i] : 0;
-        track->slew[i] += scale * (desired-track->slew[i]);
-        track->output.rpm[i] = floor(fabs(track->slew[i])+.5) * (track->slew[i]<0?-1:1);
+        track->output.rpm[i] = 0;
+        track->slew[i] = 0;
     }
     return TRACK_OK;
 }
@@ -423,7 +479,7 @@ static int Command(Track *track, const TrackObservation *sample, uint32_t now, d
     double change = 0;
     double scale;
     unsigned index;
-    if (track->config.micro_steps) return MicroCommand(track, sample, now, dt);
+    if (track->config.micro_steps) return MicroCommand(track, sample, now);
     if (!Track_Reference(track, now, &track->output.reference) ||
         !Track_Reference(track, sample->pose.tick_ms, &position) ||
         !Track_Reference(track, sample->yaw_stamp.last_ms, &heading) ||
@@ -714,7 +770,7 @@ int Track_Step(Track *track, const TrackObservation *observation, uint32_t now_m
         Publish(track);
     }
     if (track->config.micro_steps && track->micro_phase == 1 &&
-        !track->micro_token && track->output.rpm[0] != 0)
+        !track->micro_token && track->output.micro_hold)
     {
         track->micro_token = track->output.output_id;
         track->micro_requested_ms = now_ms;
