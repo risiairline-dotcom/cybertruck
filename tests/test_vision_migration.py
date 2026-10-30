@@ -38,11 +38,11 @@ class VisionTests(unittest.TestCase):
         def legacy(channels, sample):
             lab = channels.transpose(1, 2, 0)
             return np.linalg.norm((lab-np.float32(sample['lab']))/np.float32(sample['scale']), axis=2)
-        files = json.loads((ROOT / 'output/vision/samples.json').read_text(encoding='utf-8'))
         frames = [np.random.default_rng(4).integers(0, 256, (720,1280,3), dtype=np.uint8)]
-        for item in files:
+        # 本机有历史样本时一并对照；样本不入Git。
+        index = ROOT / 'output/vision/samples.json'
+        for item in json.loads(index.read_text(encoding='utf-8')) if index.is_file() else []:
             path = ROOT / 'output/vision/samples' / item['file']
-            self.assertTrue(path.exists())
             frames.append(cv2.imdecode(np.frombuffer(path.read_bytes(), dtype=np.uint8), cv2.IMREAD_COLOR))
         for frame in frames:
             actual = Detector().process(frame, 'material')
