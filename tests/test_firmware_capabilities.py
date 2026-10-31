@@ -22,18 +22,19 @@ class CapabilityTests(unittest.TestCase):
                 candidate = simulation and (version in (22, 23, 24, 35, 36, 37, 38, 39, 40, 41, 42) or 45 <= version <= LATEST_MINOR)
                 offline = simulation and version in (12, 13, 14, 17, 18, 19, 20, 21)
                 keyed = version in (17, 18, 19, 20, 21)
-                old_routes = dict(short=version in (6, 7, 8, 9, 10, 11) or (version == 52 and not simulation),
+                keyed = keyed or version == 52
+                old_routes = dict(short=version in (6, 7, 8, 9, 10, 11),
                                   north=version in (7, 8, 9, 10, 11),
                                   raw=version in (8, 9, 10, 11),
                                   tour=version in (10, 11), batch=version == 11)
                 expected = {route: bool(candidate or offline or keyed or accepted)
                             for route, accepted in old_routes.items()}
-                expected.update(start2=bool(candidate or version in (19, 20, 21)),
-                                switch=bool(candidate or version in (20, 21)))
+                expected.update(start2=bool(candidate or version in (19, 20, 21, 52)),
+                                switch=bool(candidate or version in (20, 21, 52)))
                 for route, accepted in expected.items():
                     with self.subTest(version=version, simulation=simulation, route=route):
                         self.assertEqual(caps.permits_motion(route, simulation=simulation), accepted)
-                self.assertEqual(caps.permits_key(simulation=simulation), bool(candidate or keyed or version == 52))
+                self.assertEqual(caps.permits_key(simulation=simulation), bool(candidate or keyed))
 
     def test_protocol_release_boundaries_are_bounded(self):
         for version in range(0, LATEST_MINOR + 2):
