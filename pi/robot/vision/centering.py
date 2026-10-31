@@ -40,6 +40,63 @@ def load_calibration(value):
     return data
 
 
+class RingWatch:
+    """2号圆环的稳定观测：帧新鲜度、相机身份、采集会话及停车后取样栅栏；不发送动作。"""
+    def __init__(self):
+        self.barrier=0
+        self.reset(None)
+
+    def reset(self,binding):
+        self.binding=binding
+        self.observer=None
+        self.camera=None
+        self.stream=None
+        self.floor=0.
+        self.last_sequence=-1
+
+    def fence(self,now):
+        """动作结束后只接受50ms以后采集的新帧，并清空旧稳定窗口。"""
+        self.barrier+=1
+        self.floor=now+.05
+        if self.observer:self.observer.history.clear()
+
+    def observe(self,value,received,now,expected_camera=None):
+        if (value.get('domain')!='camera_live' or value.get('camera')!='material' or
+                value.get('recognition_mode')!='ring'):
+            raise ValueError('相机帧来源不符')
+        if (type(value.get('captured_s')) not in (int,float) or
+                not 0<=now-value['captured_s']<.25 or not 0<=now-received<.25):
+            raise FrameNotFresh('等待新鲜圆环图像')
+        signature=camera_signature(value)
+        stream=(value.get('stream_id'),value.get('capture_epoch'))
+        if (not isinstance(stream[0],str) or not stream[0] or type(stream[1]) is not int or stream[1]<0):
+            raise ValueError('相机采集身份不完整')
+        if self.camera is not None and (self.camera!=signature or self.stream!=stream):
+            raise ValueError('相机身份/配置或采集会话已改变，需要重新准备')
+        if expected_camera is not None and signature!=expected_camera:
+            raise ValueError('当前相机与已验收标定不一致')
+        if self.camera is None:
+            self.camera=signature;self.stream=stream
+            self.observer=AlignmentObserver(signature,signature['device_id'])
+            self.observer.reference=dict(context=context('rough','rough_2_image_center',2),
+                centers_px={'2':[signature['image_size'][0]/2,signature['image_size'][1]/2]},id='image_center')
+        if value['captured_s']<=self.floor:return None
+        sequence=value.get('frame_id')
+        if type(sequence) is not int or sequence<=self.last_sequence:return None
+        self.last_sequence=sequence
+        o=self.observer.process(value.get('items',[]),sequence,value['captured_s'],now,
+            context('rough','rough_2_image_center',2),signature['image_size'])
+        return dict(stable=o['offset_valid'],center_px=o['current_centers_px'].get('2'),
+            image_center_px=self.observer.reference['centers_px']['2'],delta_px=o['delta_image_px'],
+            reasons=o['reasons'],samples=o['track']['samples'],span_ms=o['track']['span_ms'],
+            jitter_px=o['track']['jitter_px'],latest_capture_s=value['captured_s'],received_s=now,
+            window_max_error_px=max((math.hypot(p[2][0]-signature['image_size'][0]/2,
+                p[2][1]-signature['image_size'][1]/2) for _,p in self.observer.history),default=None),
+            oldest_capture_s=self.observer.history[0][0] if self.observer.history else value['captured_s'],
+            sequence=sequence,barrier=self.barrier,camera_signature=signature,stream_id=stream[0],
+            capture_epoch=stream[1],observation_binding_sha256=self.binding)
+
+
 class Centering:
     def __init__(self):
         self.mode='manual'
@@ -47,16 +104,11 @@ class Centering:
         self.reason=''
         self.calibration=None
         self.calibration_error='尚未导入本车已验收的方向/比例标定'
-        self.observer=None
-        self.camera=None
-        self.stream=None
+        self.watch=RingWatch()
         self.binding=None
         self.key=None
-        self.floor=0.
-        self.barrier=0
         self.ready_at=0.
         self.started=0.
-        self.last_sequence=-1
         self.last_observation=None
         self.pending_measure=None
         self.records=deque(maxlen=100)
@@ -83,8 +135,8 @@ class Centering:
             if self.calibration['observation_binding_sha256']!=binding:
                 raise ValueError('当前观察姿态与自动对中标定不一致')
         self.mode=mode;self.binding=binding;self.status='PREPARING';self.reason=''
-        self.started=now;self.key=None;self.observer=None;self.camera=None;self.stream=None
-        self.last_observation=None;self.pending_measure=None;self.last_sequence=-1
+        self.started=now;self.key=None;self.watch.reset(binding)
+        self.last_observation=None;self.pending_measure=None
         self.auto_steps=0;self.total_mm=0.;self.previous_radius=None;self.not_improving=0
         self.completed=None;self.trace.clear()
         self.reference_yaw=None
@@ -115,40 +167,8 @@ class Centering:
         else:self.pending_measure=None
 
     def _observe(self,value,received,now):
-        if (value.get('domain')!='camera_live' or value.get('camera')!='material' or
-                value.get('recognition_mode')!='ring'):
-            raise ValueError('相机帧来源不符')
-        if (type(value.get('captured_s')) not in (int,float) or
-                not 0<=now-value['captured_s']<.25 or not 0<=now-received<.25):
-            raise FrameNotFresh('等待新鲜圆环图像')
-        signature=camera_signature(value)
-        stream=(value.get('stream_id'),value.get('capture_epoch'))
-        if (not isinstance(stream[0],str) or not stream[0] or type(stream[1]) is not int or stream[1]<0):
-            raise ValueError('相机采集身份不完整')
-        if self.camera is not None and (self.camera!=signature or self.stream!=stream):
-            raise ValueError('相机身份/配置或采集会话已改变，需要重新准备')
-        if self.mode=='auto' and signature!=self.calibration['camera_signature']:
-            raise ValueError('当前相机与已验收标定不一致')
-        if self.camera is None:
-            self.camera=signature;self.stream=stream
-            self.observer=AlignmentObserver(signature,signature['device_id'])
-            self.observer.reference=dict(context=context('rough','rough_2_image_center',2),
-                centers_px={'2':[signature['image_size'][0]/2,signature['image_size'][1]/2]},id='image_center')
-        if value['captured_s']<=self.floor:return None
-        sequence=value.get('frame_id')
-        if type(sequence) is not int or sequence<=self.last_sequence:return None
-        self.last_sequence=sequence
-        o=self.observer.process(value.get('items',[]),sequence,value['captured_s'],now,
-            context('rough','rough_2_image_center',2),signature['image_size'])
-        return dict(stable=o['offset_valid'],center_px=o['current_centers_px'].get('2'),
-            image_center_px=self.observer.reference['centers_px']['2'],delta_px=o['delta_image_px'],
-            reasons=o['reasons'],samples=o['track']['samples'],span_ms=o['track']['span_ms'],
-            jitter_px=o['track']['jitter_px'],latest_capture_s=value['captured_s'],received_s=now,
-            window_max_error_px=max((math.hypot(p[2][0]-signature['image_size'][0]/2,
-                p[2][1]-signature['image_size'][1]/2) for _,p in self.observer.history),default=None),
-            oldest_capture_s=self.observer.history[0][0] if self.observer.history else value['captured_s'],
-            sequence=sequence,barrier=self.barrier,camera_signature=signature,stream_id=stream[0],
-            capture_epoch=stream[1],observation_binding_sha256=self.binding)
+        expected=self.calibration['camera_signature'] if self.mode=='auto' else None
+        return self.watch.observe(value,received,now,expected)
 
     def _record(self,link,o):
         pending=self.pending_measure
@@ -217,9 +237,8 @@ class Centering:
                 self.pause('车头偏转超过本轮固定朝向范围，保持停车');return None
         key=(arrival.action_id,arrival.steps)
         if self.key!=key:
-            self.key=key;self.barrier+=1;self.floor=now+.05;self.ready_at=now
+            self.key=key;self.watch.fence(now);self.ready_at=now
             self.last_observation=None;self.status='OBSERVING'
-            if self.observer:self.observer.history.clear()
         if not snapshot:
             if self.mode=='auto' and now-self.ready_at>3:self.pause('停车后未取得可用圆环新帧；保持停车')
             return None
@@ -247,7 +266,7 @@ class Centering:
             return saved # 必须整组停车后新帧均在容差内，不能只挑最后一帧。
         self.trace_serial+=1
         self.trace.append(dict(id=self.trace_serial,error_px=round(radius,3),action_id=arrival.action_id,
-            barrier=self.barrier,center_px=o['center_px'],target_px=o['image_center_px']))
+            barrier=self.watch.barrier,center_px=o['center_px'],target_px=o['image_center_px']))
         if self.previous_radius is not None:
             if radius>self.previous_radius*1.6+2:
                 self.pause('误差增大，检查方向映射；未继续追赶');return saved
