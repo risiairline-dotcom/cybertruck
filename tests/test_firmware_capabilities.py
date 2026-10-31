@@ -33,7 +33,7 @@ class CapabilityTests(unittest.TestCase):
                 for route, accepted in expected.items():
                     with self.subTest(version=version, simulation=simulation, route=route):
                         self.assertEqual(caps.permits_motion(route, simulation=simulation), accepted)
-                self.assertEqual(caps.permits_key(simulation=simulation), bool(candidate or keyed))
+                self.assertEqual(caps.permits_key(simulation=simulation), bool(candidate or keyed or version == 52))
 
     def test_protocol_release_boundaries_are_bounded(self):
         for version in range(0, LATEST_MINOR + 2):
@@ -95,6 +95,16 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(link.extra_request(1.), (CAN_CAPTURE, b'\0'))
         self.assertIsNone(link.extra_request(1.))
         self.assertFalse(link.command)
+
+    def test_fault_query_busy_during_startup_is_retried_not_failed(self):
+        link = self.link(52)
+        link.boot, link.bound = 1, True
+        request = p.Packet(37, 1, link.session, 1, 250, b'')
+        link.custom_reply(p.Packet(37 | 0x80, 1, link.session, 1, 250, bytes([p.BUSY])), request, 1.)
+        self.assertFalse(link.failed)
+        self.assertIsNone(link.first_fault)
+        link.custom_reply(p.Packet(37 | 0x80, 2, link.session, 1, 250, bytes([p.BUSY])), request, 1.)
+        self.assertTrue(link.failed)
 
     def test_stop_still_preempts_readonly_and_pending_start(self):
         link = self.link(42)

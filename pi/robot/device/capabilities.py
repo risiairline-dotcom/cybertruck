@@ -49,10 +49,10 @@ _SWITCH = _START2 | {'switch'}
 _NONE = frozenset()
 
 # 保留drive_core原实车白名单：.12～.16及.22以后不因只读能力而开放运动。
-# .52仅开放6RPM短段：已核对CONFIG/ARM/GOAL与.21一致，供底盘复测；路线与PC0仍未开放。
+# .52仅开放6RPM短段：板端ARM必须先有本会话PC0触发，故同时开放PC0准备；冻结路线与PC1选区仍未开放。
 _PHYSICAL = {6: _SHORT, 7: _NORTH, 8: _RAW, 9: _RAW, 10: _TOUR, 11: _BATCH,
              17: _BATCH, 18: _BATCH, 19: _START2, 20: _SWITCH, 21: _SWITCH, 52: _SHORT}
-_PHYSICAL_KEY = frozenset((17, 18, 19, 20, 21))
+_PHYSICAL_KEY = frozenset((17, 18, 19, 20, 21, 52))
 # 此表同样保留原离线入口，不把未加入回归的.15/.16/.25～.34自动视为已验证。
 _CANDIDATES = (22, 23, 24, *range(35, 43), *range(45, LATEST_MINOR + 1))
 _SIMULATED = {**_PHYSICAL, 12: _BATCH, 13: _BATCH, 14: _BATCH, **dict.fromkeys(_CANDIDATES, _SWITCH)}

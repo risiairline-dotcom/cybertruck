@@ -197,6 +197,9 @@ class MotionLink(Link):
                 self.can_capture_error = str(exc)
             return True
         if request.kind == 37:
+            # 板端复位后的启动准备期只回BUSY；只读查询按周期再问，不判为会话失效。
+            if packet.boot == self.boot and packet.payload == bytes([p.BUSY]):
+                return True
             if packet.boot != self.boot or len(packet.payload) != 113 or packet.payload[0] != p.OK:
                 self.failed = True
                 return True
