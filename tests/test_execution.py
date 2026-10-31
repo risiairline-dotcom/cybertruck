@@ -586,9 +586,14 @@ class ExecutionTests(unittest.TestCase):
         self.assertFalse(any(v.kind in (CONFIG, ARM, GOAL) for v in transport.requests))
 
     def test_can_candidate_does_not_open_physical_motion_entry(self):
+        class CandidateLink(MotionLink):
+            def feed(self, wire, now):
+                super().feed(wire, now)
+                if self.firmware:
+                    self.firmware = 'GC-BASE-0.3.51'
         transport = SimTransport(self.lib)
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ValueError, '固件或使能状态不符合'):
+            with patch('robot.drive_core.MotionLink', CandidateLink), self.assertRaisesRegex(ValueError, '固件或使能状态不符合'):
                 run_trial(transport, profile(), 'straight', directory, lambda *a, **k: None,
                           clock=lambda: transport.now, sleep=transport.sleep, simulation=False)
         self.assertFalse(any(v.kind in (CONFIG, ARM, GOAL, START_PREPARE) for v in transport.requests))
